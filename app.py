@@ -13,16 +13,83 @@ st.set_page_config(page_title="🎨🎵 Sonificazione dei Colori by loop507", la
 st.markdown("<h1>🎨🎵 Sonificazione dei Colori <span style='font-size:0.5em;'>by loop507</span></h1>", unsafe_allow_html=True)
 st.write("Carica una foto e genera un suono basato sui suoi colori!")
 
-# --- Funzione per l'analisi del colore (basata su HUE e VALUE) e mappatura alle frequenze ---
-def analyze_image_and_map_to_frequencies(image_path, min_freq=20, max_freq=2000, n_bins=5): # min_freq default a 20 Hz
+# --- Mappatura delle Frequenze per Classificazione Colore ---
+# Definiamo delle funzioni per classificare il colore e assegnare una frequenza
+# in base alle tue richieste (es. Bianco 2000Hz, Giallo 1900Hz).
+# Useremo i valori HSV (Hue, Saturation, Value) per la classificazione.
+
+def get_frequency_for_color_class(h_deg, s_val, v_val, min_f=20, max_f=2000):
+    """
+    Classifica un colore HSV medio e restituisce una frequenza discreta.
+    h_deg: Hue in gradi (0-360)
+    s_val: Saturation (0.0-1.0)
+    v_val: Value (0.0-1.0)
+    min_f, max_f: Frequenze min/max per i casi di fallback o grigi.
+    """
+    
+    # 1. Colori Acromatici (Bianco, Nero, Grigio) - priorità alta
+    if s_val < 0.15: # Bassa saturazione indica colori acromatici
+        if v_val > 0.9: # Molto luminoso = Bianco
+            return 2000 # Frequenza per il Bianco
+        elif v_val < 0.1: # Molto scuro = Nero
+            return 20 # Frequenza per il Nero
+        else: # Luminosità intermedia, bassa saturazione = Grigio
+            # Possiamo mappare i grigi in un sotto-range di frequenze
+            # O assegnare una frequenza fissa per i grigi
+            return 200 # Frequenza per il Grigio (es. 200 Hz)
+            
+    # 2. Colori Cromatici (basati sulla tonalità/Hue)
+    # Queste frequenze sono esempi per riempire il "ecc. ecc." mantenendo un ordine logico.
+    # Sono state scelte per essere discrete e distinte.
+
+    # Giallo (tra 45 e 75 gradi di Hue) e luminoso
+    if 45 <= h_deg < 75 and v_val > 0.6: 
+        return 1900 # Frequenza per il Giallo (come richiesto)
+    
+    # Arancione (tra 20 e 45 gradi)
+    if 20 <= h_deg < 45 and v_val > 0.4:
+        return 1700
+        
+    # Ciano/Azzurro (tra 165 e 210 gradi)
+    if 165 <= h_deg < 210 and v_val > 0.4:
+        return 1600
+        
+    # Verde (tra 75 e 165 gradi)
+    if 75 <= h_deg < 165 and v_val > 0.4:
+        return 1300
+        
+    # Magenta/Rosa (tra 300 e 345 gradi o molto basso < 20 per i rossi viola)
+    if (300 <= h_deg < 345 or h_deg < 20) and v_val > 0.4:
+         # Considera il rosso che "wrappa" (0 gradi) e il magenta
+         # Questa è una semplificazione, potremmo affinare con più categorie
+        return 1000 
+
+    # Rosso (Hue intorno a 0/360 gradi) - Scuro/Medio
+    if (h_deg >= 345 or h_deg < 20) and v_val < 0.6:
+        return 700
+
+    # Blu (tra 210 e 285 gradi)
+    if 210 <= h_deg < 285 and v_val > 0.2:
+        return 400
+        
+    # Fallback: Se non rientra in nessuna categoria specifica, mappiamo in base al Value
+    # Questo assicura che ogni pixel abbia una frequenza, anche quelli non "puri"
+    # Useremo una mappatura lineare semplice per questi casi
+    normalized_value = (v_val - 0.1) / 0.9 # Normalizza il valore da 0.1-1.0 a 0-1
+    if normalized_value < 0: normalized_value = 0 # Clamping
+    
+    return min_f + normalized_value * (max_f - min_f) * 0.5 # Mappiamo in un range intermedio
+
+# --- Funzione per l'analisi del colore (basata su HUE e VALUE per classificazione) ---
+def analyze_image_and_map_to_frequencies(image_path, min_freq_overall=20, max_freq_overall=2000, n_bins=5):
     """
     Analizza l'immagine, divide i colori in fasce di tonalità (hue) e mappa ciascuna a una frequenza
-    basandosi *esclusivamente* sulla Luminosità (Value). Calcola il colore RGB medio per ogni fascia.
+    basandosi sulla classificazione del colore medio di ogni fascia.
     
     Args:
         image_path (str): Percorso del file immagine.
-        min_freq (int): Frequenza minima per la mappatura.
-        max_freq (int): Frequenza massima per la mappatura.
+        min_freq_overall (int): Frequenza minima generale per i fallback.
+        max_freq_overall (int): Frequenza massima generale per i fallback.
         n_bins (int): Numero di fasce di tonalità (hue) da analizzare.
         
     Returns:
@@ -39,7 +106,7 @@ def analyze_image_and_map_to_frequencies(image_path, min_freq=20, max_freq=2000,
         pixels_flat = img_array.reshape(-1, 3)
         
         bin_rgb_sums = np.zeros((n_bins, 3), dtype=float)
-        bin_value_sums = np.zeros(n_bins, dtype=float) # Per la somma dei valori (luminosità)
+        bin_hsv_sums = np.zeros((n_bins, 3), dtype=float) # Per accumulare H, S, V per ogni bin
         bin_pixel_counts = np.zeros(n_bins, dtype=int)
         
         temp_bin_edges_for_digitize = np.linspace(0, 360, n_bins + 1)
@@ -62,7 +129,7 @@ def analyze_image_and_map_to_frequencies(image_path, min_freq=20, max_freq=2000,
                 bin_idx = 0
 
             bin_rgb_sums[bin_idx] += [r, g, b]
-            bin_value_sums[bin_idx] += v 
+            bin_hsv_sums[bin_idx] += [hue_degrees, s, v] # Accumula HSV
             bin_pixel_counts[bin_idx] += 1
         
         hist, bin_edges_hist = np.histogram(hue_values_all_pixels, bins=n_bins, range=(0, 361)) 
@@ -77,31 +144,23 @@ def analyze_image_and_map_to_frequencies(image_path, min_freq=20, max_freq=2000,
             if bin_pixel_counts[i] > 0:
                 avg_rgb = bin_rgb_sums[i] / bin_pixel_counts[i]
                 actual_hex_color_for_bin = '#%02x%02x%02x' % (int(avg_rgb[0]), int(avg_rgb[1]), int(avg_rgb[2]))
-                avg_value = bin_value_sums[i] / bin_pixel_counts[i] # Luminosità media del bin
+                
+                # Calcola l'HSV medio del bin per la classificazione
+                avg_h_deg = bin_hsv_sums[i][0] / bin_pixel_counts[i]
+                avg_s_val = bin_hsv_sums[i][1] / bin_pixel_counts[i]
+                avg_v_val = bin_hsv_sums[i][2] / bin_pixel_counts[i]
+                
+                # Assegna la frequenza usando la nuova logica di classificazione
+                frequency = get_frequency_for_color_class(avg_h_deg, avg_s_val, avg_v_val, min_freq_overall, max_freq_overall)
             else:
                 actual_hex_color_for_bin = "#CCCCCC" # Grigio chiaro per bins vuoti
-                avg_value = 0.0 # Luminosità nulla per bin vuoto
+                frequency = min_freq_overall # Frequenza minima di default per bin vuoti
             
             all_bin_actual_colors_hex.append(actual_hex_color_for_bin)
 
             if hist_normalized[i] > 0: # Processa solo le fasce che contengono pixel
-                # Calcolo della frequenza *solo* basato sulla luminosità (Value) media del bin
-                # Varia da 0 (nero) a 1 (bianco)
-                freq_exponent = avg_value 
-                
-                if freq_exponent <= 0: freq_exponent = 0.001 
-                if freq_exponent > 1: freq_exponent = 1.0 
-
-                current_min_freq = max(1, min_freq) 
-                freq_ratio = max_freq / current_min_freq
-                if freq_ratio <= 0: freq_ratio = 1 
-                
-                frequency = current_min_freq * (freq_ratio**freq_exponent)
-                
                 amplitude_weight = hist_normalized[i]
                 
-                # Le tuple contengono ancora le informazioni di Hue per completezza e display
-                # ma la frequenza è calcolata solo dal Value
                 frequencies_and_weights.append((frequency, amplitude_weight, int(bin_edges_hist[i]), int(bin_edges_hist[i+1]), actual_hex_color_for_bin))
             
         return frequencies_and_weights, hist_normalized, bin_edges_hist, all_bin_actual_colors_hex
@@ -227,32 +286,36 @@ if uploaded_file is not None:
             # --- Spiegazione Generale della Mappatura Aggiornata ---
             st.markdown("### 🔍 Come i Colori diventano Suoni:")
             st.markdown(f"""
-            Questa applicazione analizza i colori della tua immagine concentrandosi sulla loro **luminosità (Value)**,
-            e la associa a frequenze sonore.
+            Questa applicazione analizza i colori della tua immagine, li classifica in categorie (Bianco, Giallo, Rosso, ecc.)
+            e assegna una **frequenza sonora specifica e discreta** a ciascuna categoria.
             
-            * La **luminosità** del colore è il fattore principale per la frequenza:
-                * **Colori più scuri** (basso Value, come nero) sono associati a **frequenze più basse** (vicino a {min_freq_input} Hz).
-                * **Colori più chiari** (alto Value, come bianco) sono associati a **frequenze più alte** (vicino a {max_freq_input} Hz).
-            * La **tonalità (Hue)** del colore (es. rosso, verde, blu) non influisce direttamente sulla frequenza sonora,
-              ma viene comunque usata per raggruppare i pixel e visualizzare i "colori reali" negli istogrammi.
+            * **Bianco:** {get_frequency_for_color_class(0, 0, 1, min_freq_overall, max_freq_overall)} Hz (frequenza più alta)
+            * **Giallo:** {get_frequency_for_color_class(60, 0.8, 0.9, min_freq_overall, max_freq_overall)} Hz
+            * **Verde:** {get_frequency_for_color_class(120, 0.8, 0.5, min_freq_overall, max_freq_overall)} Hz
+            * **Blu:** {get_frequency_for_color_class(240, 0.8, 0.5, min_freq_overall, max_freq_overall)} Hz
+            * **Rosso:** {get_frequency_for_color_class(0, 0.8, 0.5, min_freq_overall, max_freq_overall)} Hz
+            * **Grigio:** {get_frequency_for_color_class(0, 0.05, 0.5, min_freq_overall, max_freq_overall)} Hz
+            * **Nero:** {get_frequency_for_color_class(0, 0, 0, min_freq_overall, max_freq_overall)} Hz (frequenza più bassa)
             
-            Il suono finale è un 'accordo' creato dalla combinazione delle frequenze più rappresentative
+            Il suono finale è un 'accordo' creato dalla combinazione delle frequenze associate ai colori più rappresentativi
             nell'immagine, con l'intensità di ciascuna frequenza proporzionale alla percentuale
             di quel 'colore' nella foto.
             """)
             
-            st.markdown("#### Scala Luminosità ➡️ Frequenza (Esempio)")
+            st.markdown("#### Mappatura Colore Nominato ➡️ Frequenza Discreta (Esempio)")
             hue_gradient_html = """
             <div style="width:100%; height:30px; 
                         background: linear-gradient(to right, 
-                        #000000, #404040, #808080, #C0C0C0, #FFFFFF);">
+                        #000000, #808080, #FF0000, #FFFF00, #00FF00, #0000FF, #FFFFFF);">
             </div>
             <div style="display:flex; justify-content:space-between; font-size:0.8em;">
-                <span>Nero (Value 0) - Freq Bassa</span>
-                <span>Grigio Scuro</span>
-                <span>Grigio Medio</span>
-                <span>Grigio Chiaro</span>
-                <span>Bianco (Value 1) - Freq Alta</span>
+                <span>Nero (20 Hz)</span>
+                <span>Grigio (200 Hz)</span>
+                <span>Rosso (700 Hz)</span>
+                <span>Giallo (1900 Hz)</span>
+                <span>Verde (1300 Hz)</span>
+                <span>Blu (400 Hz)</span>
+                <span>Bianco (2000 Hz)</span>
             </div>
             """
             st.markdown(hue_gradient_html, unsafe_allow_html=True)
@@ -292,8 +355,9 @@ else:
     st.markdown("""
     ### Come funziona:
     1. **Carica una foto** (JPG, PNG).
-    2. L'applicazione analizzerà la **luminosità (Value)** dei colori della tua immagine, dividendoli in fasce.
-    3. **Verranno mostrati istogrammi e una tabella** con la percentuale di ogni fascia di colore e la frequenza sonora associata. I colori negli istogrammi e nella tabella rispecchieranno i colori reali della tua foto, ma la frequenza sarà determinata dalla loro luminosità!
+    2. L'applicazione analizzerà i colori della tua immagine, li **classificherà** in categorie (es. Bianco, Giallo, Rosso)
+       e assegnerà una **frequenza sonora specifica e discreta** a ciascuna categoria.
+    3. **Verranno mostrati istogrammi e una tabella** con la percentuale di ogni fascia di colore e la frequenza sonora associata. I colori negli istogrammi e nella tabella rispecchieranno i colori reali della tua foto!
     4. Clicca su "Genera Suono dai Colori" per creare un **suono combinato** (un accordo) che rappresenta la distribuzione dei colori della tua immagine, della durata desiderata.
     5. Potrai ascoltare e scaricare il suono generato!
     """)
