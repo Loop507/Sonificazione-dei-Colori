@@ -18,13 +18,13 @@ st.write("Carica una foto e genera un suono basato sui suoi colori!")
 # in base alle tue richieste (es. Bianco 2000Hz, Giallo 1900Hz).
 # Useremo i valori HSV (Hue, Saturation, Value) per la classificazione.
 
-def get_frequency_for_color_class(h_deg, s_val, v_val, min_f=20, max_f=2000):
+def get_frequency_for_color_class(h_deg, s_val, v_val, min_f_fallback=20, max_f_fallback=2000):
     """
     Classifica un colore HSV medio e restituisce una frequenza discreta.
     h_deg: Hue in gradi (0-360)
     s_val: Saturation (0.0-1.0)
     v_val: Value (0.0-1.0)
-    min_f, max_f: Frequenze min/max per i casi di fallback o grigi.
+    min_f_fallback, max_f_fallback: Frequenze min/max per i casi di fallback o grigi non classificati.
     """
     
     # 1. Colori Acromatici (Bianco, Nero, Grigio) - priorità alta
@@ -34,8 +34,6 @@ def get_frequency_for_color_class(h_deg, s_val, v_val, min_f=20, max_f=2000):
         elif v_val < 0.1: # Molto scuro = Nero
             return 20 # Frequenza per il Nero
         else: # Luminosità intermedia, bassa saturazione = Grigio
-            # Possiamo mappare i grigi in un sotto-range di frequenze
-            # O assegnare una frequenza fissa per i grigi
             return 200 # Frequenza per il Grigio (es. 200 Hz)
             
     # 2. Colori Cromatici (basati sulla tonalità/Hue)
@@ -60,8 +58,6 @@ def get_frequency_for_color_class(h_deg, s_val, v_val, min_f=20, max_f=2000):
         
     # Magenta/Rosa (tra 300 e 345 gradi o molto basso < 20 per i rossi viola)
     if (300 <= h_deg < 345 or h_deg < 20) and v_val > 0.4:
-         # Considera il rosso che "wrappa" (0 gradi) e il magenta
-         # Questa è una semplificazione, potremmo affinare con più categorie
         return 1000 
 
     # Rosso (Hue intorno a 0/360 gradi) - Scuro/Medio
@@ -72,33 +68,14 @@ def get_frequency_for_color_class(h_deg, s_val, v_val, min_f=20, max_f=2000):
     if 210 <= h_deg < 285 and v_val > 0.2:
         return 400
         
-    # Fallback: Se non rientra in nessuna categoria specifica, mappiamo in base al Value
-    # Questo assicura che ogni pixel abbia una frequenza, anche quelli non "puri"
-    # Useremo una mappatura lineare semplice per questi casi
-    normalized_value = (v_val - 0.1) / 0.9 # Normalizza il valore da 0.1-1.0 a 0-1
-    if normalized_value < 0: normalized_value = 0 # Clamping
+    # Fallback: Se non rientra in nessuna categoria specifica
+    normalized_value = (v_val - 0.1) / 0.9 
+    if normalized_value < 0: normalized_value = 0 
     
-    return min_f + normalized_value * (max_f - min_f) * 0.5 # Mappiamo in un range intermedio
+    return min_f_fallback + normalized_value * (max_f_fallback - min_f_fallback) * 0.5 
 
 # --- Funzione per l'analisi del colore (basata su HUE e VALUE per classificazione) ---
 def analyze_image_and_map_to_frequencies(image_path, min_freq_overall=20, max_freq_overall=2000, n_bins=5):
-    """
-    Analizza l'immagine, divide i colori in fasce di tonalità (hue) e mappa ciascuna a una frequenza
-    basandosi sulla classificazione del colore medio di ogni fascia.
-    
-    Args:
-        image_path (str): Percorso del file immagine.
-        min_freq_overall (int): Frequenza minima generale per i fallback.
-        max_freq_overall (int): Frequenza massima generale per i fallback.
-        n_bins (int): Numero di fasce di tonalità (hue) da analizzare.
-        
-    Returns:
-        tuple: (list_of_frequencies_and_weights, hist_normalized, bin_edges, all_bin_actual_colors_hex)
-        list_of_frequencies_and_weights: Una lista di tuple (frequency, amplitude_weight, hue_bin_start, hue_bin_end, actual_hex_color).
-        hist_normalized: Array NumPy delle percentuali di pixel per ogni bin di tonalità.
-        bin_edges: Array NumPy dei bordi dei bins di tonalità (0-360).
-        all_bin_actual_colors_hex: Lista di stringhe esadecimali dei colori RGB medi effettivi per *tutti* i grafici (anche bins vuoti).
-    """
     try:
         img = Image.open(image_path).convert('RGB')
         img_array = np.array(img)
@@ -106,7 +83,7 @@ def analyze_image_and_map_to_frequencies(image_path, min_freq_overall=20, max_fr
         pixels_flat = img_array.reshape(-1, 3)
         
         bin_rgb_sums = np.zeros((n_bins, 3), dtype=float)
-        bin_hsv_sums = np.zeros((n_bins, 3), dtype=float) # Per accumulare H, S, V per ogni bin
+        bin_hsv_sums = np.zeros((n_bins, 3), dtype=float) 
         bin_pixel_counts = np.zeros(n_bins, dtype=int)
         
         temp_bin_edges_for_digitize = np.linspace(0, 360, n_bins + 1)
@@ -129,7 +106,7 @@ def analyze_image_and_map_to_frequencies(image_path, min_freq_overall=20, max_fr
                 bin_idx = 0
 
             bin_rgb_sums[bin_idx] += [r, g, b]
-            bin_hsv_sums[bin_idx] += [hue_degrees, s, v] # Accumula HSV
+            bin_hsv_sums[bin_idx] += [hue_degrees, s, v] 
             bin_pixel_counts[bin_idx] += 1
         
         hist, bin_edges_hist = np.histogram(hue_values_all_pixels, bins=n_bins, range=(0, 361)) 
@@ -145,20 +122,20 @@ def analyze_image_and_map_to_frequencies(image_path, min_freq_overall=20, max_fr
                 avg_rgb = bin_rgb_sums[i] / bin_pixel_counts[i]
                 actual_hex_color_for_bin = '#%02x%02x%02x' % (int(avg_rgb[0]), int(avg_rgb[1]), int(avg_rgb[2]))
                 
-                # Calcola l'HSV medio del bin per la classificazione
                 avg_h_deg = bin_hsv_sums[i][0] / bin_pixel_counts[i]
                 avg_s_val = bin_hsv_sums[i][1] / bin_pixel_counts[i]
                 avg_v_val = bin_hsv_sums[i][2] / bin_pixel_counts[i]
                 
                 # Assegna la frequenza usando la nuova logica di classificazione
+                # Passiamo min_freq_overall e max_freq_overall al fallback
                 frequency = get_frequency_for_color_class(avg_h_deg, avg_s_val, avg_v_val, min_freq_overall, max_freq_overall)
             else:
-                actual_hex_color_for_bin = "#CCCCCC" # Grigio chiaro per bins vuoti
-                frequency = min_freq_overall # Frequenza minima di default per bin vuoti
+                actual_hex_color_for_bin = "#CCCCCC" 
+                frequency = min_freq_overall 
             
             all_bin_actual_colors_hex.append(actual_hex_color_for_bin)
 
-            if hist_normalized[i] > 0: # Processa solo le fasce che contengono pixel
+            if hist_normalized[i] > 0: 
                 amplitude_weight = hist_normalized[i]
                 
                 frequencies_and_weights.append((frequency, amplitude_weight, int(bin_edges_hist[i]), int(bin_edges_hist[i+1]), actual_hex_color_for_bin))
@@ -207,7 +184,6 @@ if uploaded_file is not None:
     
     col1, col2 = st.columns(2)
     with col1:
-        # Frequenza minima predefinita a 20 Hz
         min_freq_input = st.number_input("Frequenza Minima (Hz)", min_value=1, max_value=20000, value=20, key="min_f")
     with col2:
         max_freq_input = st.number_input("Frequenza Massima (Hz)", min_value=1, max_value=20000, value=2000, key="max_f")
@@ -289,13 +265,13 @@ if uploaded_file is not None:
             Questa applicazione analizza i colori della tua immagine, li classifica in categorie (Bianco, Giallo, Rosso, ecc.)
             e assegna una **frequenza sonora specifica e discreta** a ciascuna categoria.
             
-            * **Bianco:** {get_frequency_for_color_class(0, 0, 1, min_freq_overall, max_freq_overall)} Hz (frequenza più alta)
-            * **Giallo:** {get_frequency_for_color_class(60, 0.8, 0.9, min_freq_overall, max_freq_overall)} Hz
-            * **Verde:** {get_frequency_for_color_class(120, 0.8, 0.5, min_freq_overall, max_freq_overall)} Hz
-            * **Blu:** {get_frequency_for_color_class(240, 0.8, 0.5, min_freq_overall, max_freq_overall)} Hz
-            * **Rosso:** {get_frequency_for_color_class(0, 0.8, 0.5, min_freq_overall, max_freq_overall)} Hz
-            * **Grigio:** {get_frequency_for_color_class(0, 0.05, 0.5, min_freq_overall, max_freq_overall)} Hz
-            * **Nero:** {get_frequency_for_color_class(0, 0, 0, min_freq_overall, max_freq_overall)} Hz (frequenza più bassa)
+            * **Bianco:** {get_frequency_for_color_class(0, 0, 1, min_freq_input, max_freq_input)} Hz (frequenza più alta)
+            * **Giallo:** {get_frequency_for_color_class(60, 0.8, 0.9, min_freq_input, max_freq_input)} Hz
+            * **Verde:** {get_frequency_for_color_class(120, 0.8, 0.5, min_freq_input, max_freq_input)} Hz
+            * **Blu:** {get_frequency_for_color_class(240, 0.8, 0.5, min_freq_input, max_freq_input)} Hz
+            * **Rosso:** {get_frequency_for_color_class(0, 0.8, 0.5, min_freq_input, max_freq_input)} Hz
+            * **Grigio:** {get_frequency_for_color_class(0, 0.05, 0.5, min_freq_input, max_freq_input)} Hz
+            * **Nero:** {get_frequency_for_color_class(0, 0, 0, min_freq_input, max_freq_input)} Hz (frequenza più bassa)
             
             Il suono finale è un 'accordo' creato dalla combinazione delle frequenze associate ai colori più rappresentativi
             nell'immagine, con l'intensità di ciascuna frequenza proporzionale alla percentuale
