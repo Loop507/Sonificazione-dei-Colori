@@ -23,7 +23,7 @@ def analyze_image_and_map_to_frequencies(image_path, min_freq=50, max_freq=2000,
         n_bins (int): Numero di fasce di intensità (colori) da analizzare.
         
     Returns:
-        list: Una lista di tuple (frequency, amplitude_weight) per l'accordo.
+        list: Una lista di tuple (frequency, amplitude_weight, bin_start_intensity, bin_end_intensity) per l'accordo.
     """
     try:
         img = Image.open(image_path).convert('L') # Converti in scala di grigi (Luminosità)
@@ -34,30 +34,33 @@ def analyze_image_and_map_to_frequencies(image_path, min_freq=50, max_freq=2000,
         hist, bin_edges = np.histogram(img_array.flatten(), bins=n_bins, range=(0, 256))
         
         # Normalizza l'istogramma per ottenere le percentuali
-        hist_normalized = hist / np.sum(hist)
+        total_pixels = np.sum(hist)
+        hist_normalized = hist / total_pixels if total_pixels > 0 else np.zeros_like(hist)
         
         frequencies_and_weights = []
         for i in range(n_bins):
-            if hist_normalized[i] > 0: # Ignora le fasce senza pixel
-                # Calcola il punto medio di ciascun bin per la mappatura
-                # Esempio: bin_edges[i] è l'inizio della fascia, bin_edges[i+1] è la fine
-                bin_midpoint_intensity = (bin_edges[i] + bin_edges[i+1]) / 2
-                
-                # Mappa l'intensità del punto medio al range di frequenze
-                # Usiamo una mappatura lineare o potremmo sperimentare con logaritmica
-                normalized_intensity = bin_midpoint_intensity / 255.0
-                
-                # Mappatura logaritmica per una percezione più naturale delle frequenze
-                # Evita log(0)
-                if normalized_intensity == 0:
-                    normalized_intensity = 0.001 
-                
-                frequency = min_freq * ((max_freq / min_freq)**normalized_intensity)
-                
-                # Il peso (amplitude_weight) è la percentuale di pixel in quella fascia
-                amplitude_weight = hist_normalized[i]
-                
-                frequencies_and_weights.append((frequency, amplitude_weight))
+            # Calcola il punto medio di ciascun bin per la mappatura
+            bin_midpoint_intensity = (bin_edges[i] + bin_edges[i+1]) / 2
+            
+            # Mappa l'intensità del punto medio al range di frequenze
+            normalized_intensity = bin_midpoint_intensity / 255.0
+            
+            # Mappatura logaritmica per una percezione più naturale delle frequenze
+            # Evita log(0) e divisione per zero
+            if min_freq == 0: min_freq = 1 # Prevent issues with log scale if min_freq is 0
+            if normalized_intensity == 0:
+                normalized_intensity = 0.001 
+            
+            # Ensure max_freq / min_freq is not zero or negative for power
+            freq_ratio = max_freq / min_freq if min_freq != 0 else 1
+            if freq_ratio <= 0: freq_ratio = 1 # Avoid issues with non-positive base for power
+            
+            frequency = min_freq * (freq_ratio**normalized_intensity)
+            
+            # Il peso (amplitude_weight) è la percentuale di pixel in quella fascia
+            amplitude_weight = hist_normalized[i]
+            
+            frequencies_and_weights.append((frequency, amplitude_weight, int(bin_edges[i]), int(bin_edges[i+1]-1))) # Aggiungi range intensità
         
         return frequencies_and_weights
     except Exception as e:
@@ -85,11 +88,11 @@ def generate_audio_wave(frequencies_and_weights, duration_seconds, sample_rate=4
     combined_amplitude = np.zeros_like(t, dtype=np.float32)
     
     # Normalizza i pesi in modo che la somma delle ampiezze non superi 1
-    total_weight = sum(w for f, w in frequencies_and_weights)
+    total_weight = sum(w for f, w, _, _ in frequencies_and_weights) # Ora ha 4 elementi
     if total_weight == 0:
         return np.zeros_like(t, dtype=np.float32) # Evita divisione per zero
     
-    for freq, weight in frequencies_and_weights:
+    for freq, weight, _, _ in frequencies_and_weights: # Estrai solo freq e weight per la generazione
         # L'ampiezza di ciascuna onda è proporzionale al suo peso normalizzato
         amplitude = np.sin(2 * np.pi * freq * t) * (weight / total_weight)
         combined_amplitude += amplitude
@@ -118,67 +121,82 @@ if uploaded_file is not None:
     
     col1, col2 = st.columns(2)
     with col1:
-        min_freq_input = st.number_input("Frequenza Minima (Hz)", min_value=20, max_value=20000, value=50, key="min_f")
+        min_freq_input = st.number_input("Frequenza Minima (Hz)", min_value=1, max_value=20000, value=50, key="min_f")
     with col2:
-        max_freq_input = st.number_input("Frequenza Massima (Hz)", min_value=20, max_value=20000, value=2000, key="max_f")
+        max_freq_input = st.number_input("Frequenza Massima (Hz)", min_value=1, max_value=20000, value=2000, key="max_f")
     
     # Nuovo controllo per il numero di fasce di colore
     n_bins_input = st.slider("Numero di Fasce di Colore", 1, 10, 5, 1, 
                              help="Più fasce = più frequenze diverse nel suono (suono più ricco). Meno fasce = suono più semplice.")
     
     if min_freq_input >= max_freq_input:
-        st.warning("La Frequenza Minima deve essere inferiore alla Frequenza Massima.")
+        st.warning("La Frequenza Minima deve essere inferiore o uguale alla Frequenza Massima.")
+    
+    # --- Sezione di analisi e visualizzazione immediata ---
+    st.markdown("### 📊 Analisi Colori e Frequenze Associate:")
+    
+    with st.spinner("Analizzando i colori della foto..."):
+        # Analizza l'immagine e ottieni le frequenze e i pesi
+        # Questa parte ora è fuori dal pulsante
+        frequencies_and_weights = analyze_image_and_map_to_frequencies(
+            image_path, min_freq_input, max_freq_input, n_bins_input
+        )
         
-    if st.button("🎵 Genera Suono dai Colori"):
-        with st.spinner("Analizzando i colori e generando il suono..."):
+        if frequencies_and_weights:
+            st.success("Analisi dei colori completata!")
             
-            # 1. Analizza l'immagine e ottieni le frequenze e i pesi
-            frequencies_and_weights = analyze_image_and_map_to_frequencies(
-                image_path, min_freq_input, max_freq_input, n_bins_input
-            )
+            # Creazione di una tabella o di un markdown strutturato per la visualizzazione
+            st.markdown("| Intensità Colore (0-255) | Percentuale | Frequenza Associata (Hz) | Tipo Frequenza |")
+            st.markdown("|:-----------------------:|:-----------:|:--------------------------:|:--------------:|")
             
-            if frequencies_and_weights:
-                st.success("Analisi completata!")
-                st.markdown("### Frequenze associate ai colori:")
+            for freq, weight, bin_start, bin_end in frequencies_and_weights:
+                color_range_str = f"{bin_start}-{bin_end}"
+                percentage_str = f"{weight*100:.1f}%"
+                frequency_str = f"{freq:.2f}"
                 
-                # Visualizzazione delle frequenze e dei pesi
-                freq_info = ""
-                for freq, weight in frequencies_and_weights:
-                    freq_info += f"- **{freq:.2f} Hz** (Peso: {weight*100:.1f}%) "
-                    if freq <= 100: freq_info += "(Bassa) "
-                    elif freq <= 800: freq_info += "(Media) "
-                    else: freq_info += "(Alta) "
-                    freq_info += "  \n" # Aggiungi nuova riga per markdown
-                st.markdown(freq_info)
+                freq_type = ""
+                if freq <= 100: freq_type = "Bassa"
+                elif freq <= 800: freq_type = "Media"
+                else: freq_type = "Alta"
                 
-                # 2. Genera l'onda sonora combinata
-                audio_data = generate_audio_wave(frequencies_and_weights, duration_input)
-                
-                # Scala l'audio per un volume ragionevole (int16 per WAV standard)
-                audio_data_int16 = (audio_data * 32767).astype(np.int16) 
-                
-                # 3. Salva l'audio in un file temporaneo
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_audio_file:
-                    audio_output_path = tmp_audio_file.name
-                    wavfile.write(audio_output_path, 44100, audio_data_int16) # 44100 è una sample rate standard
-                
-                st.markdown("### Ascolta il tuo Suono:")
-                st.audio(audio_output_path, format='audio/wav')
-                
-                st.download_button(
-                    label="⬇️ Scarica il suono generato",
-                    data=open(audio_output_path, 'rb').read(),
-                    file_name="suono_colore.wav",
-                    mime="audio/wav"
-                )
-                
-                # Pulizia del file audio temporaneo
-                os.unlink(audio_output_path)
-            else:
-                st.warning("Nessuna frequenza generata. Assicurati che l'immagine non sia vuota o danneggiata.")
+                st.markdown(f"| {color_range_str} | {percentage_str} | {frequency_str} | {freq_type} |")
             
-            # Pulizia del file immagine temporaneo
-            os.unlink(image_path)
+            # --- Pulsante di generazione suono (rimane separato) ---
+            st.markdown("---")
+            if st.button("🎵 Genera Suono dai Colori"):
+                with st.spinner("Generando il suono..."):
+                    # 2. Genera l'onda sonora combinata
+                    audio_data = generate_audio_wave(frequencies_and_weights, duration_input)
+                    
+                    # Scala l'audio per un volume ragionevole (int16 per WAV standard)
+                    audio_data_int16 = (audio_data * 32767).astype(np.int16) 
+                    
+                    # 3. Salva l'audio in un file temporaneo
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_audio_file:
+                        audio_output_path = tmp_audio_file.name
+                        wavfile.write(audio_output_path, 44100, audio_data_int16) # 44100 è una sample rate standard
+                    
+                    st.markdown("### Ascolta il tuo Suono:")
+                    st.audio(audio_output_path, format='audio/wav')
+                    
+                    st.download_button(
+                        label="⬇️ Scarica il suono generato",
+                        data=open(audio_output_path, 'rb').read(),
+                        file_name="suono_colore.wav",
+                        mime="audio/wav"
+                    )
+                    
+                    # Pulizia del file audio temporaneo
+                    os.unlink(audio_output_path)
+            
+        else:
+            st.warning("Nessuna frequenza generata. Assicurati che l'immagine non sia vuota o danneggiata.")
+        
+        # Pulizia del file immagine temporaneo, assicurandosi che sia fatto solo una volta
+        # quando l'intero blocco `if uploaded_file is not None` è finito.
+        # Per ora la lascio alla fine dell'intero blocco `if uploaded_file is not None`
+        # per evitare problemi con la rianalisi quando si cambiano i parametri.
+    os.unlink(image_path)
             
 else:
     st.info("⬆️ Carica una foto per iniziare la sonificazione!")
@@ -186,8 +204,8 @@ else:
     ### Come funziona:
     1. **Carica una foto** (JPG, PNG).
     2. L'applicazione analizzerà l'**intensità dei colori** della tua immagine, dividendola in fasce (es. scuro, medio, chiaro).
-    3. Ogni fascia di colore verrà mappata a una **frequenza sonora** all'interno del range che imposterai (di default 50Hz - 2000Hz).
-    4. Verrà generato un **suono combinato** (un accordo) che rappresenta la distribuzione dei colori della tua immagine, della durata desiderata.
+    3. **Verrà mostrata una tabella** con la percentuale di ogni fascia di colore e la frequenza sonora associata.
+    4. Clicca su "Genera Suono dai Colori" per creare un **suono combinato** (un accordo) che rappresenta la distribuzione dei colori della tua immagine, della durata desiderata.
     5. Potrai ascoltare e scaricare il suono generato!
     """)
 
