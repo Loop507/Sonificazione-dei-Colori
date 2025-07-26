@@ -26,11 +26,11 @@ def analyze_image_and_map_to_frequencies(image_path, min_freq=50, max_freq=2000,
         n_bins (int): Numero di fasce di tonalità (hue) da analizzare.
         
     Returns:
-        tuple: (list_of_frequencies_and_weights, hist_normalized, bin_edges, actual_bin_colors_hex)
-        list_of_frequencies_and_weights: Una lista di tuple (frequency, amplitude_weight, hue_bin_start, hue_bin_end).
+        tuple: (list_of_frequencies_and_weights, hist_normalized, bin_edges, all_bin_actual_colors_hex)
+        list_of_frequencies_and_weights: Una lista di tuple (frequency, amplitude_weight, hue_bin_start, hue_bin_end, actual_hex_color).
         hist_normalized: Array NumPy delle percentuali di pixel per ogni bin di tonalità.
         bin_edges: Array NumPy dei bordi dei bins di tonalità (0-360).
-        actual_bin_colors_hex: Lista di stringhe esadecimali dei colori RGB medi effettivi per i grafici.
+        all_bin_actual_colors_hex: Lista di stringhe esadecimali dei colori RGB medi effettivi per *tutti* i grafici (anche bins vuoti).
     """
     try:
         img = Image.open(image_path).convert('RGB') # Mantieni RGB per analisi colori
@@ -39,61 +39,74 @@ def analyze_image_and_map_to_frequencies(image_path, min_freq=50, max_freq=2000,
         pixels_flat = img_array.reshape(-1, 3) # Rende l'array 2D (N_pixels, 3_RGB)
         
         # Inizializza array per accumulare valori RGB per ogni bin
+        # E per contare i pixel in ogni bin
         bin_rgb_sums = np.zeros((n_bins, 3), dtype=float)
         bin_pixel_counts = np.zeros(n_bins, dtype=int)
         
-        hue_values_all = []
+        # Crea i bin_edges effettivi per np.digitize, che coprono 0-360 gradi.
+        # np.digitize assegna il valore al bin `i` se `bin_edges[i-1] <= value < bin_edges[i]`.
+        # Per il range (0, 360), usiamo n_bins+1 bordi.
+        temp_bin_edges_for_digitize = np.linspace(0, 360, n_bins + 1)
+        
+        hue_values_all_pixels = [] # Per l'istogramma complessivo del hue
 
         # Processa pixel per pixel per assegnarli ai bins di tonalità e accumulare RGB
         for r, g, b in pixels_flat:
-            h, s, v = colorsys.rgb_to_hsv(r/255., g/255., b/255.)
-            hue_degrees = h * 360 # Converti hue in gradi (0-360)
+            # Assicurati che r,g,b siano in un range valido per colorsys
+            r_norm, g_norm, b_norm = r/255., g/255., b/255.
             
-            hue_values_all.append(hue_degrees) # Per l'istogramma complessivo del hue
+            # Gestisci il caso di pixel completamente neri o bianchi che non hanno una tonalità definita
+            # o saturazione/valore molto bassi. Assegneremo una tonalità "neutra" o li ignoreremo per la mappatura del colore.
+            # Per ora, li includiamo nell'istogramma complessivo ma la loro tonalità sarà 0 o undefined.
+            if s_val := (r_norm + g_norm + b_norm) / 3: # Calcola luminosità media
+                h, s, v = colorsys.rgb_to_hsv(r_norm, g_norm, b_norm)
+                hue_degrees = h * 360 # Converti hue in gradi (0-360)
+            else: # Colore nero (r=g=b=0), tonalità indefinita. Assegnamo 0 per il binning.
+                hue_degrees = 0
+            
+            hue_values_all_pixels.append(hue_degrees) 
 
             # Trova a quale bin di tonalità appartiene questo pixel
-            # np.digitize restituisce l'indice del bin a cui appartiene l'elemento
-            # bin_edges deve essere ordinato e senza duplicati. range=(0, 361) per l'istogramma, quindi 361 bordi.
-            # Qui usiamo arange per creare i bin edges per np.digitize
-            # Dobbiamo gestire il wrapping del colore (es. 350° e 10° sono entrambi "rossi")
-            # Per questa versione, lo trattiamo come un cerchio lineare da 0 a 360.
+            # np.digitize restituisce l'indice del bin
+            # Esempio: digitize(10, [0, 90, 180]) -> 1 (perché 0 <= 10 < 90)
+            # Per 360, np.digitize([360], np.linspace(0, 360, n_bins+1)) potrebbe restituire n_bins.
+            # Dobbiamo fare in modo che 360 venga mappato all'ultimo bin (o al primo, se pensiamo al cerchio)
+            # Per una mappatura lineare da 0 a 360, 360 deve andare nell'ultimo bin.
+            bin_idx = np.digitize(hue_degrees, temp_bin_edges_for_digitize) - 1
             
-            # Crea i bin_edges effettivi per digitize
-            temp_bin_edges = np.linspace(0, 360, n_bins + 1)
-            bin_idx = np.digitize(hue_degrees, temp_bin_edges) - 1
-            
-            # Gestione dei bordi: se un pixel è esattamente 360, finisce nell'ultimo bin.
+            # Correzione bordo: se hue_degrees è esattamente 360, digitize lo mette nel bin dopo l'ultimo.
+            # Lo mappiamo all'ultimo bin valido.
             if bin_idx == n_bins:
                 bin_idx = n_bins - 1
-            if bin_idx < 0: # Caso di pixel con Hue ~0 (rosso), ma digita restituisce -1
+            # Correzione bordo: se hue_degrees è esattamente 0, digitize lo mette nel primo bin valido.
+            if bin_idx < 0:
                 bin_idx = 0
 
             bin_rgb_sums[bin_idx] += [r, g, b]
             bin_pixel_counts[bin_idx] += 1
         
         # Calcola l'istogramma delle tonalità dai valori raccolti
-        hist, bin_edges_hist = np.histogram(hue_values_all, bins=n_bins, range=(0, 361)) 
+        # bin_edges_hist sarà usato per le etichette dell'asse X nei grafici.
+        hist, bin_edges_hist = np.histogram(hue_values_all_pixels, bins=n_bins, range=(0, 361)) 
         
         total_pixels = np.sum(hist)
         hist_normalized = hist / total_pixels if total_pixels > 0 else np.zeros_like(hist)
         
-        frequencies_and_weights = []
-        actual_bin_colors_hex = []
+        frequencies_and_weights = [] # Conterrà solo le fasce con pixel
+        all_bin_actual_colors_hex = [] # Conterrà un colore per TUTTE le fasce (anche vuote)
 
         for i in range(n_bins):
-            # Calcola il colore RGB medio per questo bin
+            # Calcola il colore RGB medio per questo bin (anche se vuoto, per i grafici)
             if bin_pixel_counts[i] > 0:
                 avg_rgb = bin_rgb_sums[i] / bin_pixel_counts[i]
-                # Converte il colore RGB medio in formato esadecimale
-                actual_hex_color = '#%02x%02x%02x' % (int(avg_rgb[0]), int(avg_rgb[1]), int(avg_rgb[2]))
+                actual_hex_color_for_bin = '#%02x%02x%02x' % (int(avg_rgb[0]), int(avg_rgb[1]), int(avg_rgb[2]))
             else:
-                actual_hex_color = "#CCCCCC" # Grigio chiaro per bins vuoti
+                actual_hex_color_for_bin = "#CCCCCC" # Grigio chiaro per bins vuoti
             
-            actual_bin_colors_hex.append(actual_hex_color)
+            all_bin_actual_colors_hex.append(actual_hex_color_for_bin)
 
-            if hist_normalized[i] > 0: # Processa solo le fasce con pixel
+            if hist_normalized[i] > 0: # Processa solo le fasce che contengono pixel
                 # Calcola il punto medio di ciascun bin per la mappatura della frequenza
-                # Usiamo i bin_edges effettivi dell'istogramma per la coerenza
                 hue_bin_midpoint = (bin_edges_hist[i] + bin_edges_hist[i+1]) / 2
                 
                 # Normalizza la tonalità (0-360) a un valore 0.0-1.0
@@ -108,12 +121,12 @@ def analyze_image_and_map_to_frequencies(image_path, min_freq=50, max_freq=2000,
                 
                 frequency = current_min_freq * (freq_ratio**normalized_hue)
                 
-                # Il peso (amplitude_weight) è la percentuale di pixel in quella fascia di tonalità
                 amplitude_weight = hist_normalized[i]
                 
-                frequencies_and_weights.append((frequency, amplitude_weight, int(bin_edges_hist[i]), int(bin_edges_hist[i+1]))) # Aggiungi range tonalità
+                # Includi il colore esadecimale reale direttamente nella tupla restituita
+                frequencies_and_weights.append((frequency, amplitude_weight, int(bin_edges_hist[i]), int(bin_edges_hist[i+1]), actual_hex_color_for_bin))
             
-        return frequencies_and_weights, hist_normalized, bin_edges_hist, actual_bin_colors_hex
+        return frequencies_and_weights, hist_normalized, bin_edges_hist, all_bin_actual_colors_hex
     except Exception as e:
         st.error(f"Errore nell'analisi dell'immagine: {e}")
         return [], np.array([]), np.array([]), []
@@ -124,7 +137,7 @@ def generate_audio_wave(frequencies_and_weights, duration_seconds, sample_rate=4
     Genera un'onda sonora combinando più sinusoidi.
     
     Args:
-        frequencies_and_weights (list): Lista di tuple (frequency, amplitude_weight, hue_bin_start, hue_bin_end).
+        frequencies_and_weights (list): Lista di tuple (frequency, amplitude_weight, hue_bin_start, hue_bin_end, actual_hex_color).
         duration_seconds (float): Durata dell'onda in secondi.
         sample_rate (int): Frequenza di campionamento in Hz.
         
@@ -139,11 +152,11 @@ def generate_audio_wave(frequencies_and_weights, duration_seconds, sample_rate=4
     combined_amplitude = np.zeros_like(t, dtype=np.float32)
     
     # Normalizza i pesi in modo che la somma delle ampiezze non superi 1
-    total_weight = sum(w for f, w, _, _ in frequencies_and_weights) # Ora ha 4 elementi
+    total_weight = sum(w for f, w, _, _, _ in frequencies_and_weights) 
     if total_weight == 0:
         return np.zeros_like(t, dtype=np.float32) # Evita divisione per zero
     
-    for freq, weight, _, _ in frequencies_and_weights: 
+    for freq, weight, _, _, _ in frequencies_and_weights: 
         if freq > 0 and weight > 0: 
             amplitude = np.sin(2 * np.pi * freq * t) * (weight / total_weight)
             combined_amplitude += amplitude
@@ -183,7 +196,7 @@ if uploaded_file is not None:
     st.markdown("### 📊 Analisi Colori e Frequenze Associate:")
     
     with st.spinner("Analizzando i colori della foto..."):
-        frequencies_and_weights, hist_normalized, bin_edges, actual_bin_colors_hex = analyze_image_and_map_to_frequencies(
+        frequencies_and_weights, hist_normalized, bin_edges, all_bin_actual_colors_hex = analyze_image_and_map_to_frequencies(
             image_path, min_freq_input, max_freq_input, n_bins_input
         )
         
@@ -197,11 +210,8 @@ if uploaded_file is not None:
                 fig_color, ax_color = plt.subplots(figsize=(6, 4))
                 hue_bin_labels = [f"{int(bin_edges[i])}°-{int(bin_edges[i+1])}°" for i in range(len(bin_edges)-1)]
                 
-                # Assicurati che il numero di colori corrisponda al numero di barre nell'istogramma
-                num_bars = len(hist_normalized)
-                colors_for_bars = actual_bin_colors_hex[:num_bars] if len(actual_bin_colors_hex) >= num_bars else actual_bin_colors_hex + ["#CCCCCC"] * (num_bars - len(actual_bin_colors_hex))
-                
-                ax_color.bar(hue_bin_labels, hist_normalized * 100, color=colors_for_bars) 
+                # Ora usiamo i colori per *tutti* i bin, inclusi quelli vuoti, per l'istogramma completo
+                ax_color.bar(hue_bin_labels, hist_normalized * 100, color=all_bin_actual_colors_hex) 
                 ax_color.set_xlabel("Fascia di Tonalità (Hue in gradi)")
                 ax_color.set_ylabel("Percentuale (%)")
                 ax_color.set_title("Percentuale Pixels per Fascia di Tonalità")
@@ -212,21 +222,11 @@ if uploaded_file is not None:
 
             with col_chart2:
                 st.markdown("#### Frequenze Generate e Peso")
-                freq_labels = [f"{f:.0f} Hz" for f, w, _, _ in frequencies_and_weights]
-                freq_weights = [w * 100 for f, w, _, _ in frequencies_and_weights]
+                freq_labels = [f"{f:.0f} Hz" for f, w, _, _, _ in frequencies_and_weights]
+                freq_weights = [w * 100 for f, w, _, _, _ in frequencies_and_weights]
                 
-                # Usa gli stessi colori RGB medi per le barre delle frequenze
-                bar_colors_freq = []
-                # Mappa le frequencies_and_weights originali ai colori
-                for item_freq_weight in frequencies_and_weights:
-                    # Cerchiamo il colore basandoci sull'indice del bin o sul range di hue
-                    # Per semplicità, assumiamo che l'ordine sia lo stesso
-                    hue_start_for_this_freq = item_freq_weight[2]
-                    # Trova l'indice del bin corrispondente nella lista dei colori reali
-                    bin_idx_for_color = np.digitize(hue_start_for_this_freq, np.linspace(0, 360, n_bins + 1)) -1
-                    if bin_idx_for_color < 0: bin_idx_for_color = 0 # Handle edge case for 0 hue
-                    if bin_idx_for_color >= len(actual_bin_colors_hex): bin_idx_for_color = len(actual_bin_colors_hex) - 1 # Handle edge case for 360 hue
-                    bar_colors_freq.append(actual_bin_colors_hex[bin_idx_for_color])
+                # Ora il colore è incluso direttamente nella tupla frequencies_and_weights
+                bar_colors_freq = [item[4] for item in frequencies_and_weights]
 
                 fig_freq, ax_freq = plt.subplots(figsize=(6, 4))
                 ax_freq.bar(freq_labels, freq_weights, color=bar_colors_freq)
@@ -244,17 +244,7 @@ if uploaded_file is not None:
             st.markdown("|:----------------------:|:-----------:|:--------------------------:|:--------------:|")
             
             # Qui usiamo il colore RGB medio dal bin per il quadratino
-            for i, (freq, weight, hue_start, hue_end) in enumerate(frequencies_and_weights):
-                # Trova il colore esadecimale corrispondente a questo bin.
-                # Assumiamo che l'ordine di frequencies_and_weights sia lo stesso dei bin_edges
-                # Questo richiede una piccola modifica alla funzione di analisi per restituire una lista più consistente
-                # Per ora, usiamo l'indice 'i' per recuperare il colore dal `actual_bin_colors_hex`
-                
-                if i < len(actual_bin_colors_hex):
-                    rep_hex = actual_bin_colors_hex[i]
-                else:
-                    rep_hex = "#CCCCCC" # Fallback
-                
+            for freq, weight, hue_start, hue_end, rep_hex in frequencies_and_weights:
                 hue_range_str = f"<span style='background-color:{rep_hex}; padding: 2px 5px; border-radius:3px;'>&nbsp;&nbsp;&nbsp;</span> {hue_start}°-{hue_end}°"
                 percentage_str = f"{weight*100:.1f}%"
                 frequency_str = f"{freq:.2f}"
