@@ -13,11 +13,11 @@ st.set_page_config(page_title="🎨🎵 Sonificazione dei Colori by loop507", la
 st.markdown("<h1>🎨🎵 Sonificazione dei Colori <span style='font-size:0.5em;'>by loop507</span></h1>", unsafe_allow_html=True)
 st.write("Carica una foto e genera un suono basato sui suoi colori!")
 
-# --- Funzione per l'analisi del colore (basata su HUE) e mappatura alle frequenze ---
+# --- Funzione per l'analisi del colore (basata su HUE e VALUE) e mappatura alle frequenze ---
 def analyze_image_and_map_to_frequencies(image_path, min_freq=50, max_freq=2000, n_bins=5):
     """
-    Analizza l'immagine, divide i colori in fasce di tonalità (hue) e mappa ciascuna a una frequenza.
-    Calcola il colore RGB medio per ogni fascia di tonalità.
+    Analizza l'immagine, divide i colori in fasce di tonalità (hue) e mappa ciascuna a una frequenza
+    basandosi sia su Hue che su Value (luminosità). Calcola il colore RGB medio per ogni fascia.
     
     Args:
         image_path (str): Percorso del file immagine.
@@ -33,97 +33,90 @@ def analyze_image_and_map_to_frequencies(image_path, min_freq=50, max_freq=2000,
         all_bin_actual_colors_hex: Lista di stringhe esadecimali dei colori RGB medi effettivi per *tutti* i grafici (anche bins vuoti).
     """
     try:
-        img = Image.open(image_path).convert('RGB') # Mantieni RGB per analisi colori
+        img = Image.open(image_path).convert('RGB')
         img_array = np.array(img)
         
-        pixels_flat = img_array.reshape(-1, 3) # Rende l'array 2D (N_pixels, 3_RGB)
+        pixels_flat = img_array.reshape(-1, 3)
         
-        # Inizializza array per accumulare valori RGB per ogni bin
-        # E per contare i pixel in ogni bin
         bin_rgb_sums = np.zeros((n_bins, 3), dtype=float)
+        bin_value_sums = np.zeros(n_bins, dtype=float) # Nuova variabile per la somma dei valori (luminosità)
         bin_pixel_counts = np.zeros(n_bins, dtype=int)
         
-        # Crea i bin_edges effettivi per np.digitize, che coprono 0-360 gradi.
-        # np.digitize assegna il valore al bin `i` se `bin_edges[i-1] <= value < bin_edges[i]`.
-        # Per il range (0, 360), usiamo n_bins+1 bordi.
         temp_bin_edges_for_digitize = np.linspace(0, 360, n_bins + 1)
         
-        hue_values_all_pixels = [] # Per l'istogramma complessivo del hue
+        hue_values_all_pixels = []
 
-        # Processa pixel per pixel per assegnarli ai bins di tonalità e accumulare RGB
         for r, g, b in pixels_flat:
-            # Assicurati che r,g,b siano in un range valido per colorsys
             r_norm, g_norm, b_norm = r/255., g/255., b/255.
             
-            # Gestisci il caso di pixel completamente neri o bianchi che non hanno una tonalità definita
-            # o saturazione/valore molto bassi. Assegneremo una tonalità "neutra" o li ignoreremo per la mappatura del colore.
-            # Per ora, li includiamo nell'istogramma complessivo ma la loro tonalità sarà 0 o undefined.
-            if s_val := (r_norm + g_norm + b_norm) / 3: # Calcola luminosità media
-                h, s, v = colorsys.rgb_to_hsv(r_norm, g_norm, b_norm)
-                hue_degrees = h * 360 # Converti hue in gradi (0-360)
-            else: # Colore nero (r=g=b=0), tonalità indefinita. Assegnamo 0 per il binning.
-                hue_degrees = 0
+            # Calcola HSV per ogni pixel
+            h, s, v = colorsys.rgb_to_hsv(r_norm, g_norm, b_norm)
+            hue_degrees = h * 360 # Tonalità in gradi (0-360)
             
             hue_values_all_pixels.append(hue_degrees) 
 
-            # Trova a quale bin di tonalità appartiene questo pixel
-            # np.digitize restituisce l'indice del bin
-            # Esempio: digitize(10, [0, 90, 180]) -> 1 (perché 0 <= 10 < 90)
-            # Per 360, np.digitize([360], np.linspace(0, 360, n_bins+1)) potrebbe restituire n_bins.
-            # Dobbiamo fare in modo che 360 venga mappato all'ultimo bin (o al primo, se pensiamo al cerchio)
-            # Per una mappatura lineare da 0 a 360, 360 deve andare nell'ultimo bin.
+            # Trova il bin di tonalità
             bin_idx = np.digitize(hue_degrees, temp_bin_edges_for_digitize) - 1
             
-            # Correzione bordo: se hue_degrees è esattamente 360, digitize lo mette nel bin dopo l'ultimo.
-            # Lo mappiamo all'ultimo bin valido.
             if bin_idx == n_bins:
                 bin_idx = n_bins - 1
-            # Correzione bordo: se hue_degrees è esattamente 0, digitize lo mette nel primo bin valido.
             if bin_idx < 0:
                 bin_idx = 0
 
             bin_rgb_sums[bin_idx] += [r, g, b]
+            bin_value_sums[bin_idx] += v # Aggiungi il valore (luminosità) del pixel
             bin_pixel_counts[bin_idx] += 1
         
-        # Calcola l'istogramma delle tonalità dai valori raccolti
-        # bin_edges_hist sarà usato per le etichette dell'asse X nei grafici.
         hist, bin_edges_hist = np.histogram(hue_values_all_pixels, bins=n_bins, range=(0, 361)) 
         
         total_pixels = np.sum(hist)
         hist_normalized = hist / total_pixels if total_pixels > 0 else np.zeros_like(hist)
         
-        frequencies_and_weights = [] # Conterrà solo le fasce con pixel
-        all_bin_actual_colors_hex = [] # Conterrà un colore per TUTTE le fasce (anche vuote)
+        frequencies_and_weights = []
+        all_bin_actual_colors_hex = []
+
+        # Coefficienti per la mappatura combinata (es. 50% Hue, 50% Value)
+        hue_weight = 0.5
+        value_weight = 0.5 
 
         for i in range(n_bins):
-            # Calcola il colore RGB medio per questo bin (anche se vuoto, per i grafici)
             if bin_pixel_counts[i] > 0:
                 avg_rgb = bin_rgb_sums[i] / bin_pixel_counts[i]
                 actual_hex_color_for_bin = '#%02x%02x%02x' % (int(avg_rgb[0]), int(avg_rgb[1]), int(avg_rgb[2]))
+                avg_value = bin_value_sums[i] / bin_pixel_counts[i] # Luminosità media del bin
             else:
                 actual_hex_color_for_bin = "#CCCCCC" # Grigio chiaro per bins vuoti
+                avg_value = 0.0 # Luminosità nulla per bin vuoto
             
             all_bin_actual_colors_hex.append(actual_hex_color_for_bin)
 
             if hist_normalized[i] > 0: # Processa solo le fasce che contengono pixel
-                # Calcola il punto medio di ciascun bin per la mappatura della frequenza
                 hue_bin_midpoint = (bin_edges_hist[i] + bin_edges_hist[i+1]) / 2
                 
-                # Normalizza la tonalità (0-360) a un valore 0.0-1.0
                 normalized_hue = hue_bin_midpoint / 360.0
                 
                 current_min_freq = max(1, min_freq) 
-                if normalized_hue == 0:
-                    normalized_hue = 0.001 
                 
+                # Calcolo della frequenza combinato: (normalized_hue * weight_hue) + (normalized_value * weight_value)
+                # Questo assicura che il bianco puro (Value=1.0) spinga l'esponente più in alto,
+                # e il nero (Value=0.0) lo spinga più in basso.
+                # Se il normalized_hue è 0 (rosso), l'esponente dipende solo da normalized_value.
+                # Se il normalized_value è 0 (nero), l'esponente dipende solo da normalized_hue (ma sarà basso).
+                
+                # L'esponente deve essere sempre positivo per la potenza.
+                freq_exponent = (normalized_hue * hue_weight) + (avg_value * value_weight)
+                
+                # Assicuriamo che l'esponente sia in un range ragionevole e non zero
+                if freq_exponent <= 0: freq_exponent = 0.001 
+                if freq_exponent > 1: freq_exponent = 1.0 # Limita l'esponente a 1 per evitare frequenze oltre max_freq
+
                 freq_ratio = max_freq / current_min_freq
                 if freq_ratio <= 0: freq_ratio = 1 
                 
-                frequency = current_min_freq * (freq_ratio**normalized_hue)
+                frequency = current_min_freq * (freq_ratio**freq_exponent)
                 
                 amplitude_weight = hist_normalized[i]
                 
-                # Includi il colore esadecimale reale direttamente nella tupla restituita
                 frequencies_and_weights.append((frequency, amplitude_weight, int(bin_edges_hist[i]), int(bin_edges_hist[i+1]), actual_hex_color_for_bin))
             
         return frequencies_and_weights, hist_normalized, bin_edges_hist, all_bin_actual_colors_hex
@@ -151,10 +144,9 @@ def generate_audio_wave(frequencies_and_weights, duration_seconds, sample_rate=4
     
     combined_amplitude = np.zeros_like(t, dtype=np.float32)
     
-    # Normalizza i pesi in modo che la somma delle ampiezze non superi 1
     total_weight = sum(w for f, w, _, _, _ in frequencies_and_weights) 
     if total_weight == 0:
-        return np.zeros_like(t, dtype=np.float32) # Evita divisione per zero
+        return np.zeros_like(t, dtype=np.float32) 
     
     for freq, weight, _, _, _ in frequencies_and_weights: 
         if freq > 0 and weight > 0: 
@@ -210,7 +202,6 @@ if uploaded_file is not None:
                 fig_color, ax_color = plt.subplots(figsize=(6, 4))
                 hue_bin_labels = [f"{int(bin_edges[i])}°-{int(bin_edges[i+1])}°" for i in range(len(bin_edges)-1)]
                 
-                # Ora usiamo i colori per *tutti* i bin, inclusi quelli vuoti, per l'istogramma completo
                 ax_color.bar(hue_bin_labels, hist_normalized * 100, color=all_bin_actual_colors_hex) 
                 ax_color.set_xlabel("Fascia di Tonalità (Hue in gradi)")
                 ax_color.set_ylabel("Percentuale (%)")
@@ -225,7 +216,6 @@ if uploaded_file is not None:
                 freq_labels = [f"{f:.0f} Hz" for f, w, _, _, _ in frequencies_and_weights]
                 freq_weights = [w * 100 for f, w, _, _, _ in frequencies_and_weights]
                 
-                # Ora il colore è incluso direttamente nella tupla frequencies_and_weights
                 bar_colors_freq = [item[4] for item in frequencies_and_weights]
 
                 fig_freq, ax_freq = plt.subplots(figsize=(6, 4))
@@ -243,7 +233,6 @@ if uploaded_file is not None:
             st.markdown("| Fascia Tonalità (Hue) | Percentuale | Frequenza Associata (Hz) | Tipo Frequenza |")
             st.markdown("|:----------------------:|:-----------:|:--------------------------:|:--------------:|")
             
-            # Qui usiamo il colore RGB medio dal bin per il quadratino
             for freq, weight, hue_start, hue_end, rep_hex in frequencies_and_weights:
                 hue_range_str = f"<span style='background-color:{rep_hex}; padding: 2px 5px; border-radius:3px;'>&nbsp;&nbsp;&nbsp;</span> {hue_start}°-{hue_end}°"
                 percentage_str = f"{weight*100:.1f}%"
@@ -260,31 +249,37 @@ if uploaded_file is not None:
             
             st.markdown("---")
             
-            # --- Spiegazione Generale della Mappatura ---
+            # --- Spiegazione Generale della Mappatura Aggiornata ---
             st.markdown("### 🔍 Come i Colori diventano Suoni:")
             st.markdown(f"""
-            Questa applicazione analizza le **tonalità (Hue)** della tua immagine e i colori reali presenti,
-            dividendoli in fasce (es. blu, verde, rosso, ecc.).
+            Questa applicazione analizza i colori della tua immagine considerando sia la loro **tonalità (Hue)**
+            che la loro **luminosità (Value)**, e li associa a frequenze sonore.
             
-            * Le **tonalità più vicine al rosso/arancione** (Hue basso, es. 0-60°) sono associate a **frequenze più basse**.
-            * Le **tonalità più vicine al blu/viola** (Hue alto, es. 240-300°) sono associate a **frequenze più alte**.
+            * Le **tonalità** (come rosso, giallo, blu) influenzano la frequenza di base.
+            * La **luminosità** (quanto un colore è scuro o chiaro) spinge la frequenza verso l'alto o il basso:
+                * **Colori più chiari** (alto Value, come bianco, giallo chiaro) sono associati a **frequenze più alte**.
+                * **Colori più scuri** (basso Value, come nero, blu scuro) sono associati a **frequenze più basse**.
             
             Il suono finale è un 'accordo' creato dalla combinazione delle frequenze più rappresentative
             nell'immagine, con l'intensità di ciascuna frequenza proporzionale alla percentuale
             di quel 'colore' nella foto.
             """)
             
-            st.markdown("#### Scala Tonalità ➡️ Frequenza (Esempio)")
+            st.markdown("#### Scala Colore & Luminosità ➡️ Frequenza (Esempio)")
             hue_gradient_html = """
             <div style="width:100%; height:30px; 
                         background: linear-gradient(to right, 
-                        #FF0000, #FFFF00, #00FF00, #00FFFF, #0000FF, #FF00FF, #FF0000);">
+                        #000000, #FF0000, #FFFF00, #00FF00, #00FFFF, #0000FF, #FF00FF, #FFFFFF);">
             </div>
             <div style="display:flex; justify-content:space-between; font-size:0.8em;">
-                <span>Rosso (0°) - Bassa Freq.</span>
-                <span>Verde (120°)</span>
-                <span>Blu (240°) - Alta Freq.</span>
-                <span>Rosso (360°)</span>
+                <span>Nero (Value 0) - Freq Bassa</span>
+                <span>Rosso (Hue 0°)</span>
+                <span>Giallo (Hue 60°)</span>
+                <span>Verde (Hue 120°)</span>
+                <span>Ciano (Hue 180°)</span>
+                <span>Blu (Hue 240°)</span>
+                <span>Magenta (Hue 300°)</span>
+                <span>Bianco (Value 1) - Freq Alta</span>
             </div>
             """
             st.markdown(hue_gradient_html, unsafe_allow_html=True)
@@ -324,8 +319,8 @@ else:
     st.markdown("""
     ### Come funziona:
     1. **Carica una foto** (JPG, PNG).
-    2. L'applicazione analizzerà le **tonalità (Hue)** della tua immagine e i **colori reali** presenti, dividendoli in fasce.
-    3. **Verranno mostrati istogrammi e una tabella** con la percentuale di ogni fascia di tonalità e la frequenza sonora associata. I colori negli istogrammi e nella tabella rispecchieranno i colori reali della tua foto!
+    2. L'applicazione analizzerà le **tonalità (Hue)** e la **luminosità (Value)** dei colori della tua immagine, dividendoli in fasce.
+    3. **Verranno mostrati istogrammi e una tabella** con la percentuale di ogni fascia di colore e la frequenza sonora associata. I colori negli istogrammi e nella tabella rispecchieranno i colori reali della tua foto!
     4. Clicca su "Genera Suono dai Colori" per creare un **suono combinato** (un accordo) che rappresenta la distribuzione dei colori della tua immagine, della durata desiderata.
     5. Potrai ascoltare e scaricare il suono generato!
     """)
