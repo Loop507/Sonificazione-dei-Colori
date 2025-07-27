@@ -157,7 +157,8 @@ def analyze_image_and_map_to_frequencies(image_path, n_bins=5):
 # --- Funzione per generare un'onda sinusoidale o un accordo ---
 def generate_audio_wave(frequencies_and_weights_with_vval, duration_seconds, sample_rate=44100, 
                        waveform_mode="single", single_waveform_type="sine", 
-                       bright_wave="sine", medium_wave="square", dark_wave="sawtooth"):
+                       bright_wave="sine", medium_wave="square", dark_wave="sawtooth",
+                       fade_in_duration=0, fade_out_duration=0):
     
     if not frequencies_and_weights_with_vval:
         return np.zeros(int(sample_rate * duration_seconds), dtype=np.float32)
@@ -209,7 +210,22 @@ def generate_audio_wave(frequencies_and_weights_with_vval, duration_seconds, sam
         
     max_amplitude = np.max(np.abs(combined_amplitude))
     if max_amplitude > 0:
-        combined_amplitude /= max_amplitude
+        combined_amplitude /= max_amplitude # Normalizza l'ampiezza per evitare clipping
+
+    # Applica fade-in e fade-out al segmento generato
+    if fade_in_duration > 0:
+        fade_in_samples = int(fade_in_duration * sample_rate)
+        if fade_in_samples > len(combined_amplitude):
+            fade_in_samples = len(combined_amplitude) # Limit to segment length
+        window_in = np.linspace(0., 1., fade_in_samples)
+        combined_amplitude[:fade_in_samples] *= window_in
+
+    if fade_out_duration > 0:
+        fade_out_samples = int(fade_out_duration * sample_rate)
+        if fade_out_samples > len(combined_amplitude):
+            fade_out_samples = len(combined_amplitude) # Limit to segment length
+        window_out = np.linspace(1., 0., fade_out_samples)
+        combined_amplitude[-fade_out_samples:] *= window_out
         
     return combined_amplitude
 
@@ -217,6 +233,18 @@ def generate_audio_wave(frequencies_and_weights_with_vval, duration_seconds, sam
 
 # Abilita il caricamento di più file
 uploaded_files = st.file_uploader("📸 Carica una o più foto (fino a 10)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
+
+# Inizializza processed_images_data nello stato della sessione se non esiste
+if 'processed_images_data' not in st.session_state:
+    st.session_state.processed_images_data = []
+
+# Se il numero di file caricati cambia, pulisci i dati processati per evitare incongruenze
+# Compara i nomi dei file caricati con quelli nello stato della sessione
+uploaded_file_names = [f.name for f in uploaded_files]
+stored_file_names = [data['name'] for data in st.session_state.processed_images_data]
+
+if uploaded_file_names != stored_file_names:
+    st.session_state.processed_images_data = [] # Pulisci se i file sono cambiati o l'ordine è diverso
 
 if uploaded_files:
     # Limita il numero di file a 10
@@ -229,11 +257,13 @@ if uploaded_files:
     # Checkbox per scegliere la modalità: singola immagine o brano sperimentale
     sonification_mode = st.radio(
         "Modalità di Sonificazione:",
-        ["Singola Immagine (un accordo per immagine)", "Brano Sperimentale (sequenza di accordi)"],
+        ["Singola Immagine (un accordo per immagine)", "Brano Sperimentale (sequenza e mixaggio)"],
         key="sonification_mode_selector"
     )
 
     duration_input = 2.0 # Default value, will be overridden
+    sample_rate = 44100 # Definizione del sample rate
+    
     if sonification_mode == "Singola Immagine (un accordo per immagine)":
         duration_input = st.slider("Durata del suono (secondi)", 0.5, 60.0, 2.0, 0.5) # Aumento max durata a 60s
     else: # Brano Sperimentale
@@ -257,9 +287,27 @@ if uploaded_files:
                 step=0.1,
                 help="Durata di ogni singola battuta."
             )
-        # La duration_input per ogni singola immagine verrà calcolata all'interno del loop
-        # per il brano sperimentale, non è un input diretto qui.
-        st.info(f"Ogni immagine durerà {beats_per_image * tempo_per_beat:.1f} secondi. Durata totale stimata del brano: {len(uploaded_files) * beats_per_image * tempo_per_beat:.1f} secondi.")
+        
+        # New slider for overlap duration
+        overlap_duration = st.slider(
+            "Durata Sovrapposizione (secondi)",
+            min_value=0.0,
+            max_value=tempo_per_beat * beats_per_image * 0.9, # Max 90% of segment duration
+            value=min(0.5, tempo_per_beat * beats_per_image * 0.5), # Default 0.5s or half segment
+            step=0.1,
+            help="Per quanto tempo il suono di un'immagine si sovrappone a quello successivo. Controlla il grado di mixaggio."
+        )
+
+        # Durata base di ogni segmento senza sovrapposizione
+        segment_duration_raw = beats_per_image * tempo_per_beat
+        
+        # Calcolo durata totale del brano
+        if len(uploaded_files) > 0:
+            total_estimated_duration = (len(uploaded_files) * segment_duration_raw) - ((len(uploaded_files) - 1) * overlap_duration)
+        else:
+            total_estimated_duration = 0
+
+        st.info(f"Ogni immagine durerà {segment_duration_raw:.1f} secondi. Durata totale stimata del brano: {total_estimated_duration:.1f} secondi.")
 
 
     col1, col2 = st.columns(2)
@@ -321,95 +369,94 @@ if uploaded_files:
             )
         st.markdown("---")
 
-    # Mostra analisi e generazione solo se ci sono file caricati
-    for i, uploaded_file in enumerate(uploaded_files):
-        st.markdown(f"#### Analisi per Immagine {i+1}: {uploaded_file.name}")
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_image_file:
-            tmp_image_file.write(uploaded_file.read())
-            image_path = tmp_image_file.name
-        
-        st.image(image_path, caption=f"Foto {i+1}: {uploaded_file.name}", use_container_width=True)
-        
-        with st.spinner(f"Analizzando i colori dell'immagine {i+1}..."):
-            frequencies_and_weights_with_vval, hist_normalized, bin_edges, all_bin_actual_colors_hex = analyze_image_and_map_to_frequencies(
-                image_path, n_bins_input
-            )
+    # Mostra analisi e generazione solo se ci sono file caricati e i dati non sono già in session_state
+    if not st.session_state.processed_images_data: # Solo se i dati non sono già stati processati
+        for i, uploaded_file in enumerate(uploaded_files):
+            st.markdown(f"#### Analisi per Immagine {i+1}: {uploaded_file.name}")
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_image_file:
+                tmp_image_file.write(uploaded_file.read())
+                image_path = tmp_image_file.name
             
-            if frequencies_and_weights_with_vval or (hist_normalized.size > 0 and np.sum(hist_normalized) > 0): 
-                st.success(f"Analisi colori per immagine {i+1} completata!")
-                
-                col_chart1, col_chart2 = st.columns(2)
-
-                with col_chart1:
-                    st.markdown("##### Distribuzione Tonalità Colore")
-                    fig_color, ax_color = plt.subplots(figsize=(6, 4))
-                    hue_bin_labels = [f"{int(bin_edges[i])}°-{int(bin_edges[i+1])}°" for i in range(len(bin_edges)-1)]
-                    
-                    ax_color.bar(hue_bin_labels, hist_normalized * 100, color=all_bin_actual_colors_hex) 
-                    ax_color.set_xlabel("Fascia di Tonalità (gradi Hue)")
-                    ax_color.set_ylabel("Percentuale (%)")
-                    ax_color.set_title("Percentuale Pixels per Fascia di Tonalità")
-                    plt.xticks(rotation=45, ha="right")
-                    plt.tight_layout()
-                    st.pyplot(fig_color)
-                    plt.close(fig_color) 
-
-                with col_chart2:
-                    st.markdown("##### Frequenze Generate e Peso")
-                    freq_labels = [f"{f:.0f} Hz" for f, w, _, _, _, _ in frequencies_and_weights_with_vval]
-                    freq_weights = [w * 100 for f, w, _, _, _, _ in frequencies_and_weights_with_vval]
-                    
-                    bar_colors_freq = [item[4] for item in frequencies_and_weights_with_vval]
-
-                    fig_freq, ax_freq = plt.subplots(figsize=(6, 4))
-                    ax_freq.bar(freq_labels, freq_weights, color=bar_colors_freq)
-                    ax_freq.set_xlabel("Frequenza (Hz)")
-                    ax_freq.set_ylabel("Peso nell'Accordo (%)")
-                    ax_freq.set_title("Frequenze e loro Peso nel Suono")
-                    plt.xticks(rotation=45, ha="right")
-                    plt.tight_layout()
-                    st.pyplot(fig_freq)
-                    plt.close(fig_freq) 
-                    
-                st.markdown("---")
-                st.markdown("##### Tabella Dettaglio Frequenze:")
-                st.markdown("| Fascia Tonalità (Hue) | Percentuale | Frequenza Associata (Hz) | Luminosità (0-1) | Tipo Frequenza |")
-                st.markdown("|:----------------------:|:-----------:|:--------------------------:|:----------------:|:--------------:|")
-                
-                for freq, weight, hue_start, hue_end, rep_hex, v_val in frequencies_and_weights_with_vval:
-                    hue_range_str = f"<span style='background-color:{rep_hex}; padding: 2px 5px; border-radius:3px;'>&nbsp;&nbsp;&nbsp;</span> {hue_start}°-{hue_end}°"
-                    percentage_str = f"{weight*100:.1f}%"
-                    frequency_str = f"{freq:.2f}"
-                    brightness_str = f"{v_val:.2f}" 
-                    
-                    freq_type = ""
-                    if freq < 200: freq_type = "Molto Bassa" 
-                    elif freq < 500: freq_type = "Bassa"
-                    elif freq < 800: freq_type = "Medio-Bassa"
-                    elif freq < 1200: freq_type = "Media"
-                    elif freq < 1800: freq_type = "Medio-Alta"
-                    elif freq < 2000: freq_type = "Alta"
-                    else: freq_type = "Molto Alta"
-                    
-                    st.markdown(f"| {hue_range_str} | {percentage_str} | {frequency_str} | {brightness_str} | {freq_type} |", unsafe_allow_html=True)
-                
-                st.markdown("---")
-                
-                # Memorizza i dati per la generazione audio
-                # Uso una lista di dizionari per associare i dati all'immagine
-                if 'processed_images_data' not in st.session_state:
-                    st.session_state.processed_images_data = []
-                st.session_state.processed_images_data.append({
-                    'image_path': image_path,
-                    'frequencies_and_weights': frequencies_and_weights_with_vval,
-                    'name': uploaded_file.name
-                })
-
-            else:
-                st.warning(f"Nessuna frequenza generata per l'immagine {i+1}. Assicurati che l'immagine non sia vuota o danneggiata.")
+            st.image(image_path, caption=f"Foto {i+1}: {uploaded_file.name}", use_container_width=True)
             
-            # Non eliminare il file temporaneo qui, perché lo useremo per generare il suono
-            # os.unlink(image_path) # Commentato temporaneamente
+            with st.spinner(f"Analizzando i colori dell'immagine {i+1}..."):
+                frequencies_and_weights_with_vval, hist_normalized, bin_edges, all_bin_actual_colors_hex = analyze_image_and_map_to_frequencies(
+                    image_path, n_bins_input
+                )
+                
+                if frequencies_and_weights_with_vval or (hist_normalized.size > 0 and np.sum(hist_normalized) > 0): 
+                    st.success(f"Analisi colori per immagine {i+1} completata!")
+                    
+                    col_chart1, col_chart2 = st.columns(2)
+
+                    with col_chart1:
+                        st.markdown("##### Distribuzione Tonalità Colore")
+                        fig_color, ax_color = plt.subplots(figsize=(6, 4))
+                        hue_bin_labels = [f"{int(bin_edges[i])}°-{int(bin_edges[i+1])}°" for i in range(len(bin_edges)-1)]
+                        
+                        ax_color.bar(hue_bin_labels, hist_normalized * 100, color=all_bin_actual_colors_hex) 
+                        ax_color.set_xlabel("Fascia di Tonalità (gradi Hue)")
+                        ax_color.set_ylabel("Percentuale (%)")
+                        ax_color.set_title("Percentuale Pixels per Fascia di Tonalità")
+                        plt.xticks(rotation=45, ha="right")
+                        plt.tight_layout()
+                        st.pyplot(fig_color)
+                        plt.close(fig_color) 
+
+                    with col_chart2:
+                        st.markdown("##### Frequenze Generate e Peso")
+                        freq_labels = [f"{f:.0f} Hz" for f, w, _, _, _, _ in frequencies_and_weights_with_vval]
+                        freq_weights = [w * 100 for f, w, _, _, _, _ in frequencies_and_weights_with_vval]
+                        
+                        bar_colors_freq = [item[4] for item in frequencies_and_weights_with_vval]
+
+                        fig_freq, ax_freq = plt.subplots(figsize=(6, 4))
+                        ax_freq.bar(freq_labels, freq_weights, color=bar_colors_freq)
+                        ax_freq.set_xlabel("Frequenza (Hz)")
+                        ax_freq.set_ylabel("Peso nell'Accordo (%)")
+                        ax_freq.set_title("Frequenze e loro Peso nel Suono")
+                        plt.xticks(rotation=45, ha="right")
+                        plt.tight_layout()
+                        st.pyplot(fig_freq)
+                        plt.close(fig_freq) 
+                        
+                    st.markdown("---")
+                    st.markdown("##### Tabella Dettaglio Frequenze:")
+                    st.markdown("| Fascia Tonalità (Hue) | Percentuale | Frequenza Associata (Hz) | Luminosità (0-1) | Tipo Frequenza |")
+                    st.markdown("|:----------------------:|:-----------:|:--------------------------:|:----------------:|:--------------:|")
+                    
+                    for freq, weight, hue_start, hue_end, rep_hex, v_val in frequencies_and_weights_with_vval:
+                        hue_range_str = f"<span style='background-color:{rep_hex}; padding: 2px 5px; border-radius:3px;'>&nbsp;&nbsp;&nbsp;</span> {hue_start}°-{hue_end}°"
+                        percentage_str = f"{weight*100:.1f}%"
+                        frequency_str = f"{freq:.2f}"
+                        brightness_str = f"{v_val:.2f}" 
+                        
+                        freq_type = ""
+                        if freq < 200: freq_type = "Molto Bassa" 
+                        elif freq < 500: freq_type = "Bassa"
+                        elif freq < 800: freq_type = "Medio-Bassa"
+                        elif freq < 1200: freq_type = "Media"
+                        elif freq < 1800: freq_type = "Medio-Alta"
+                        elif freq < 2000: freq_type = "Alta"
+                        else: freq_type = "Molto Alta"
+                        
+                        st.markdown(f"| {hue_range_str} | {percentage_str} | {frequency_str} | {brightness_str} | {freq_type} |", unsafe_allow_html=True)
+                    
+                    st.markdown("---")
+                    
+                    # Memorizza i dati per la generazione audio
+                    st.session_state.processed_images_data.append({
+                        'image_path': image_path,
+                        'frequencies_and_weights': frequencies_and_weights_with_vval,
+                        'name': uploaded_file.name
+                    })
+
+                else:
+                    st.warning(f"Nessuna frequenza generata per l'immagine {i+1}. Assicurati che l'immagine non sia vuota o danneggiata.")
+                
+    else: # If data is already in session_state, just display paths and analysis if desired (optional, for brevity not showing full analysis again)
+        st.info("Le immagini sono già state analizzate. Premi 'Genera Suono dai Colori' o modifica le impostazioni.")
+
 
     st.markdown("---")
     st.markdown("### 🔍 Come i Colori diventano Suoni:")
@@ -432,7 +479,7 @@ if uploaded_files:
     assegni l'onda in base alla luminosità del colore, con assegnazioni personalizzabili:
     * **Colori Chiari (Luminosità Alta):** Puoi scegliere il tipo di onda.
     * **Colori Medi (Luminosità Media):** Puoi scegliere il tipo di onda.
-    * **Colori Scuri (Luminosità Bassa):** Puoi scegliere il tipo di onda.
+    * **Colore Scuri (Luminosità Bassa):** Puoi scegliere il tipo di onda.
     
     """)
     
@@ -465,18 +512,25 @@ if uploaded_files:
 
     # --- Pulsante di generazione suono ---
     if st.button("🎵 Genera Suono dai Colori"):
-        if 'processed_images_data' in st.session_state and st.session_state.processed_images_data:
+        if st.session_state.processed_images_data:
             with st.spinner("Generando il suono..."):
-                all_audio_segments = []
+                all_raw_audio_segments = []
                 
                 # Determina la durata per ogni segmento in base alla modalità
                 segment_duration = 0
+                current_fade_in_duration = 0 # Inizializza per uso nel loop
+                current_fade_out_duration = 0 # Inizializza per uso nel loop
+
                 if sonification_mode == "Singola Immagine (un accordo per immagine)":
-                    segment_duration = duration_input # Prende il valore dallo slider diretto
+                    segment_duration = duration_input
                 else: # Brano Sperimentale
                     segment_duration = beats_per_image * tempo_per_beat
-
-
+                    current_fade_in_duration = overlap_duration # Fade-in uguale alla durata di sovrapposizione
+                    # Qui non applichiamo un fade-out al singolo segmento se non l'ultimo,
+                    # perché vogliamo che si "mischino" continuamente.
+                    # Un fade-out generale verrà applicato alla fine del brano completo.
+                
+                # Genera i segmenti audio INDIVIDUALI prima di miscelarli
                 for img_data in st.session_state.processed_images_data:
                     frequencies_and_weights_to_use = img_data['frequencies_and_weights']
                     
@@ -484,7 +538,9 @@ if uploaded_files:
                     if waveform_selection_mode == "Onda Singola per tutti i Colori":
                         if selected_single_waveform == "Mixed (Sine + Square + Sawtooth)":
                             audio_data_segment = generate_audio_wave(frequencies_and_weights_to_use, segment_duration, 
-                                                            waveform_mode="mixed_all")
+                                                            waveform_mode="mixed_all", sample_rate=sample_rate,
+                                                            fade_in_duration=current_fade_in_duration if sonification_mode == "Brano Sperimentale (sequenza e mixaggio)" else 0,
+                                                            fade_out_duration=current_fade_out_duration if sonification_mode == "Brano Sperimentale (sequenza e mixaggio)" else 0)
                         else:
                             waveform_map_internal = {
                                 "Sine": "sine",
@@ -493,25 +549,72 @@ if uploaded_files:
                             }
                             audio_data_segment = generate_audio_wave(frequencies_and_weights_to_use, segment_duration, 
                                                             waveform_mode="single", 
-                                                            single_waveform_type=waveform_map_internal[selected_single_waveform])
+                                                            single_waveform_type=waveform_map_internal[selected_single_waveform], sample_rate=sample_rate,
+                                                            fade_in_duration=current_fade_in_duration if sonification_mode == "Brano Sperimentale (sequenza e mixaggio)" else 0,
+                                                            fade_out_duration=current_fade_out_duration if sonification_mode == "Brano Sperimentale (sequenza e mixaggio)" else 0)
                     else: # Onda per Luminosità del Colore
                         audio_data_segment = generate_audio_wave(frequencies_and_weights_to_use, segment_duration, 
                                                         waveform_mode="by_brightness",
                                                         bright_wave=bright_wave_type,
                                                         medium_wave=medium_wave_type,
-                                                        dark_wave=dark_wave_type)
+                                                        dark_wave=dark_wave_type, sample_rate=sample_rate,
+                                                        fade_in_duration=current_fade_in_duration if sonification_mode == "Brano Sperimentale (sequenza e mixaggio)" else 0,
+                                                        fade_out_duration=current_fade_out_duration if sonification_mode == "Brano Sperimentale (sequenza e mixaggio)" else 0)
                     
                     if audio_data_segment is not None:
-                        all_audio_segments.append(audio_data_segment)
+                        all_raw_audio_segments.append(audio_data_segment)
                 
-                # Concatena tutti i segmenti audio
-                if all_audio_segments:
-                    final_audio_data = np.concatenate(all_audio_segments)
+                # Combinazione dei segmenti per il "Mixing Continuo"
+                final_audio_data = np.array([], dtype=np.float32)
+                
+                if all_raw_audio_segments:
+                    if sonification_mode == "Singola Immagine (un accordo per immagine)":
+                        final_audio_data = all_raw_audio_segments[0] # Per singolo audio, prendi il primo segmento
+                    else: # Brano Sperimentale con Mixing Continuo
+                        
+                        # Calcola la lunghezza totale necessaria per il brano mixato
+                        # Ogni segmento dura segment_duration
+                        # Il successivo inizia dopo (segment_duration - overlap_duration)
+                        # Quindi l'avanzamento netto per segmento è (segment_duration - overlap_duration)
+                        total_samples_needed = int( (len(all_raw_audio_segments) * segment_duration - \
+                                                 (len(all_raw_audio_segments) - 1) * overlap_duration) * sample_rate )
+                        
+                        if total_samples_needed < 0: # Caso limite con troppa sovrapposizione o poche immagini
+                            total_samples_needed = int(segment_duration * sample_rate) # Minimum: first segment
+                        
+                        final_audio_data = np.zeros(total_samples_needed, dtype=np.float32)
+                        
+                        current_offset_samples = 0
+                        offset_per_segment_samples = int((segment_duration - overlap_duration) * sample_rate)
+
+                        for i, segment in enumerate(all_raw_audio_segments):
+                            segment_samples = len(segment)
+                            
+                            # Calcola la fine del segmento corrente nel buffer finale
+                            end_pos = current_offset_samples + segment_samples
+                            
+                            # Estendi il final_audio_data se necessario (dovrebbe già essere grande abbastanza, ma per sicurezza)
+                            if end_pos > len(final_audio_data):
+                                temp_extend = np.zeros(end_pos - len(final_audio_data), dtype=np.float32)
+                                final_audio_data = np.concatenate((final_audio_data, temp_extend))
+                            
+                            # Aggiungi il segmento al mix complessivo
+                            final_audio_data[current_offset_samples:end_pos] += segment
+                            
+                            # Aggiorna l'offset per il prossimo segmento
+                            current_offset_samples += offset_per_segment_samples
+                    
+                    # Normalizza il volume del brano finale per evitare clipping dopo la somma
+                    max_amplitude = np.max(np.abs(final_audio_data))
+                    if max_amplitude > 0:
+                        final_audio_data /= max_amplitude # Normalizza a 1.0 (o -1.0 a 1.0)
+                        final_audio_data *= 0.8 # Un po' di margine per sicurezza
+
                     audio_data_int16 = (final_audio_data * 32767).astype(np.int16) 
                     
                     with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_audio_file:
                         audio_output_path = tmp_audio_file.name
-                        wavfile.write(audio_output_path, 44100, audio_data_int16) 
+                        wavfile.write(audio_output_path, sample_rate, audio_data_int16) 
                     
                     st.markdown("### Ascolta il tuo Suono:")
                     st.audio(audio_output_path, format='audio/wav')
@@ -519,7 +622,7 @@ if uploaded_files:
                     st.download_button(
                         label="⬇️ Scarica il suono generato",
                         data=open(audio_output_path, 'rb').read(),
-                        file_name="suono_colore_brano.wav" if sonification_mode == "Brano Sperimentale (sequenza di accordi)" else "suono_colore.wav",
+                        file_name="suono_colore_brano.wav" if sonification_mode == "Brano Sperimentale (sequenza e mixaggio)" else "suono_colore.wav",
                         mime="audio/wav"
                     )
                     
@@ -546,7 +649,7 @@ else:
     2.  L'applicazione analizzerà i colori di ogni immagine, **interpolando le frequenze** per i colori misti
         e assegnando frequenze fisse per i colori primari e acromatici.
     3.  **Scegli la modalità di sonificazione:** "Singola Immagine" (un accordo statico per la durata scelta)
-        o "Brano Sperimentale" (una sequenza di accordi dalle tue foto, con controllo su battute e tempo).
+        o "Brano Sperimentale" (una sequenza di accordi dalle tue foto, con controllo su battute, tempo e **mixaggio continuo**).
     4.  **Scegli il tipo di onda sonora** che vuoi utilizzare: una singola onda per tutte le frequenze, una miscela di tutte,
         o un'assegnazione automatica basata sulla luminosità dei colori, con selezioni personalizzabili.
     5.  **Verranno mostrati istogrammi e una tabella** con la percentuale di ogni fascia di colore e la frequenza sonora associata per ciascuna immagine.
