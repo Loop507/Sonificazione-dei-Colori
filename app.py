@@ -84,6 +84,43 @@ def get_frequency_for_color_class(h_deg, s_val, v_val):
     
     return interpolated_frequency
 
+# --- Nuova funzione per ottenere il nome descrittivo del colore per la fascia Hue ---
+def get_hue_range_name(hue_start, hue_end):
+    # Hue values: 0=Red, 60=Yellow, 120=Green, 180=Cyan, 240=Blue, 300=Magenta, 360=Red
+    
+    # Calcola il punto medio per una migliore classificazione
+    mid_hue = (hue_start + hue_end) / 2
+    if hue_start > hue_end: # Per il caso che attraversa 0/360 (es. 330-30)
+        mid_hue = (hue_start + hue_end + 360) / 2
+        if mid_hue >= 360: mid_hue -= 360
+
+    if 345 <= mid_hue <= 360 or 0 <= mid_hue < 15:
+        return "Rosso"
+    elif 15 <= mid_hue < 45:
+        return "Rosso-Arancio"
+    elif 45 <= mid_hue < 75:
+        return "Giallo-Arancio"
+    elif 75 <= mid_hue < 105:
+        return "Giallo-Verde"
+    elif 105 <= mid_hue < 135:
+        return "Verde"
+    elif 135 <= mid_hue < 165:
+        return "Verde-Ciano"
+    elif 165 <= mid_hue < 195:
+        return "Ciano"
+    elif 195 <= mid_hue < 225:
+        return "Ciano-Blu"
+    elif 225 <= mid_hue < 255:
+        return "Blu"
+    elif 255 <= mid_hue < 285:
+        return "Blu-Violetto"
+    elif 285 <= mid_hue < 315:
+        return "Magenta-Violetto"
+    elif 315 <= mid_hue < 345:
+        return "Magenta-Rosso"
+    else:
+        return "Indefinito" # Should not happen with 0-360 range
+
 # --- Funzione per l'analisi del colore ---
 def analyze_image_and_map_to_frequencies(image_path, n_bins=5):
     try:
@@ -422,13 +459,15 @@ if uploaded_files:
                         
                     st.markdown("---")
                     st.markdown("##### Tabella Dettaglio Frequenze:")
-                    st.markdown("| Fascia Tonalità (Hue) | Percentuale | Frequenza Associata (Hz) | Luminosità (0-1) | Tipo Frequenza |")
-                    st.markdown("|:----------------------:|:-----------:|:--------------------------:|:----------------:|:--------------:|")
+                    st.markdown("| Fascia Colore (Hue) | % Pixels | Frequenza (Hz) | Luminosità HSV | Altezza |")
+                    st.markdown("|:--------------------|:---------|:---------------|:---------------|:--------|")
                     
                     for freq, weight, hue_start, hue_end, rep_hex, v_val in frequencies_and_weights_with_vval:
-                        hue_range_str = f"<span style='background-color:{rep_hex}; padding: 2px 5px; border-radius:3px;'>&nbsp;&nbsp;&nbsp;</span> {hue_start}°-{hue_end}°"
+                        hue_name = get_hue_range_name(hue_start, hue_end)
+                        
+                        hue_range_str = f"**{hue_name}** <span style='background-color:{rep_hex}; padding: 2px 5px; border-radius:3px; display:inline-block; vertical-align:middle;'>&nbsp;</span> ({hue_start}°-{hue_end}°)"
                         percentage_str = f"{weight*100:.1f}%"
-                        frequency_str = f"{freq:.2f}"
+                        frequency_str = f"{int(freq)}" # Arrotonda a intero
                         brightness_str = f"{v_val:.2f}" 
                         
                         freq_type = ""
@@ -479,33 +518,31 @@ if uploaded_files:
     assegni l'onda in base alla luminosità del colore, con assegnazioni personalizzabili:
     * **Colori Chiari (Luminosità Alta):** Puoi scegliere il tipo di onda.
     * **Colori Medi (Luminosità Media):** Puoi scegliere il tipo di onda.
-    * **Colore Scuri (Luminosità Bassa):** Puoi scegliere il tipo di onda.
+    * **Colori Scuri (Luminosità Bassa):** Puoi scegliere il tipo di onda.
     
     """)
     
-    st.markdown("#### Esempio: Interpolazione Colore ➡️ Frequenza")
-    hue_gradient_html = """
-    <div style="width:100%; height:30px; 
-                background: linear-gradient(to right, 
-                #FF0000, #FF8000, #FFFF00, #80FF00, #00FF00, #00FF80, #00FFFF, #0080FF, #0000FF, #8000FF, #FF00FF, #FF0080, #FF0000);">
+    st.markdown("#### Mappatura Tonalità (Hue) ➡️ Frequenza Base:")
+    st.markdown("""
+    <div style="width:100%; position:relative; height:150px; background: 
+        linear-gradient(to right, 
+        #FF0000 0%, #FF8000 10%, #FFFF00 20%, #80FF00 30%, #00FF00 40%, 
+        #00FF80 50%, #00FFFF 60%, #0080FF 70%, #0000FF 80%, #8000FF 90%, #FF00FF 100%); 
+        border-radius: 10px; overflow: hidden; margin-bottom: 20px;">
+        
+        <div style="position:absolute; bottom:5px; width:100%; display:flex; justify-content:space-between; font-size:0.75em; color:white; text-shadow: 1px 1px 2px black;">
+            <span style="position:absolute; left:0%; transform:translateX(-50%); text-align:center;">Red<br>(0°)<br>700Hz</span>
+            <span style="position:absolute; left:16.6%; transform:translateX(-50%); text-align:center;">Yellow<br>(60°)<br>1900Hz</span>
+            <span style="position:absolute; left:33.3%; transform:translateX(-50%); text-align:center;">Green<br>(120°)<br>1300Hz</span>
+            <span style="position:absolute; left:50%; transform:translateX(-50%); text-align:center;">Cyan<br>(180°)<br>1600Hz</span>
+            <span style="position:absolute; left:66.6%; transform:translateX(-50%); text-align:center;">Blue<br>(240°)<br>400Hz</span>
+            <span style="position:absolute; left:83.3%; transform:translateX(-50%); text-align:center;">Magenta<br>(300°)<br>1000Hz</span>
+            <span style="position:absolute; left:100%; transform:translateX(-50%); text-align:center;">Red<br>(360°)<br>700Hz</span>
+        </div>
     </div>
-    <div style="display:flex; justify-content:space-between; font-size:0.8em; flex-wrap: wrap;">
-        <span>Red (700Hz)</span>
-        <span>Orange (Interp.)</span>
-        <span>Yellow (1900Hz)</span>
-        <span>Lime (Interp.)</span>
-        <span>Green (1300Hz)</span>
-        <span>Turquoise (Interp.)</span>
-        <span>Cyan (1600Hz)</span>
-        <span>Azure (Interp.)</span>
-        <span>Blue (400Hz)</span>
-        <span>Violet (Interp.)</span>
-        <span>Magenta (1000Hz)</span>
-        <span>Rose (Interp.)</span>
-        <span>Red (700Hz)</span>
-    </div>
-    """
-    st.markdown(hue_gradient_html, unsafe_allow_html=True)
+    <p style="font-size:0.85em; text-align:center;"><i>Le frequenze intermedie sono interpolate tra questi punti di ancoraggio.<br>
+    I colori acromatici (bianco, nero, grigio) e alcuni colori speciali (rosa, marrone, giallo chiaro) hanno frequenze fisse dedicate.</i></p>
+    """, unsafe_allow_html=True)
     
     st.markdown("---")
 
@@ -522,7 +559,7 @@ if uploaded_files:
                 current_fade_out_duration = 0 # Inizializza per uso nel loop
 
                 if sonification_mode == "Singola Immagine (un accordo per immagine)":
-                    segment_duration = duration_input
+                    segment_duration = duration_input # Prende il valore dallo slider diretto
                 else: # Brano Sperimentale
                     segment_duration = beats_per_image * tempo_per_beat
                     current_fade_in_duration = overlap_duration # Fade-in uguale alla durata di sovrapposizione
@@ -569,17 +606,23 @@ if uploaded_files:
                 
                 if all_raw_audio_segments:
                     if sonification_mode == "Singola Immagine (un accordo per immagine)":
-                        final_audio_data = all_raw_audio_segments[0] # Per singolo audio, prendi il primo segmento
+                        # Per singolo audio, prendi il primo segmento e applica fade-in/out se necessario (qui non definiti negli slider per questa modalità)
+                        final_audio_data = all_raw_audio_segments[0] 
                     else: # Brano Sperimentale con Mixing Continuo
                         
                         # Calcola la lunghezza totale necessaria per il brano mixato
                         # Ogni segmento dura segment_duration
                         # Il successivo inizia dopo (segment_duration - overlap_duration)
                         # Quindi l'avanzamento netto per segmento è (segment_duration - overlap_duration)
-                        total_samples_needed = int( (len(all_raw_audio_segments) * segment_duration - \
-                                                 (len(all_raw_audio_segments) - 1) * overlap_duration) * sample_rate )
+                        # Più il tempo effettivo del primo segmento
                         
-                        if total_samples_needed < 0: # Caso limite con troppa sovrapposizione o poche immagini
+                        total_duration_calculated = segment_duration + (len(all_raw_audio_segments) - 1) * (segment_duration - overlap_duration)
+                        if len(all_raw_audio_segments) == 1: # Se c'è solo un'immagine
+                             total_duration_calculated = segment_duration
+                        
+                        total_samples_needed = int(total_duration_calculated * sample_rate)
+                        
+                        if total_samples_needed < 0: 
                             total_samples_needed = int(segment_duration * sample_rate) # Minimum: first segment
                         
                         final_audio_data = np.zeros(total_samples_needed, dtype=np.float32)
@@ -593,13 +636,16 @@ if uploaded_files:
                             # Calcola la fine del segmento corrente nel buffer finale
                             end_pos = current_offset_samples + segment_samples
                             
-                            # Estendi il final_audio_data se necessario (dovrebbe già essere grande abbastanza, ma per sicurezza)
+                            # Estendi il final_audio_data se necessario
                             if end_pos > len(final_audio_data):
                                 temp_extend = np.zeros(end_pos - len(final_audio_data), dtype=np.float32)
                                 final_audio_data = np.concatenate((final_audio_data, temp_extend))
                             
                             # Aggiungi il segmento al mix complessivo
-                            final_audio_data[current_offset_samples:end_pos] += segment
+                            # Assicurati che il segmento non superi la dimensione dell'array finale
+                            actual_segment_length_to_add = min(segment_samples, len(final_audio_data) - current_offset_samples)
+                            if actual_segment_length_to_add > 0:
+                                final_audio_data[current_offset_samples : current_offset_samples + actual_segment_length_to_add] += segment[:actual_segment_length_to_add]
                             
                             # Aggiorna l'offset per il prossimo segmento
                             current_offset_samples += offset_per_segment_samples
