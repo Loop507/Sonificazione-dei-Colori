@@ -34,44 +34,62 @@ def get_frequency_for_color_class(h_deg, s_val, v_val, min_f_fallback=20, max_f_
         elif v_val < 0.1: # Molto scuro = Nero
             return 20 # Frequenza per il Nero
         else: # Luminosità intermedia, bassa saturazione = Grigio
-            return 200 # Frequenza per il Grigio (es. 200 Hz)
+            return 200 # Frequenza per il Grigio
             
-    # 2. Colori Cromatici (basati sulla tonalità/Hue)
-    # Queste frequenze sono esempi per riempire il "ecc. ecc." mantenendo un ordine logico.
-    # Sono state scelte per essere discrete e distinte.
+    # 2. Colori Cromatici (basati sulla tonalità/Hue e poi saturazione/valore)
+    # L'ordine è importante per le classificazioni sovrapposte (es. Giallo Chiaro prima di Giallo)
 
-    # Giallo (tra 45 e 75 gradi di Hue) e luminoso
+    # Giallo Chiaro (Hue giallo, alta luminosità)
+    if 45 <= h_deg < 75 and v_val > 0.8:
+        return 1950 # Frequenza per il Giallo Chiaro
+        
+    # Giallo (Hue giallo, luminosità media/alta)
     if 45 <= h_deg < 75 and v_val > 0.6: 
-        return 1900 # Frequenza per il Giallo (come richiesto)
+        return 1900 # Frequenza per il Giallo
     
-    # Arancione (tra 20 e 45 gradi)
+    # Arancione (Hue arancione, luminosità media/alta)
     if 20 <= h_deg < 45 and v_val > 0.4:
         return 1700
         
-    # Ciano/Azzurro (tra 165 e 210 gradi)
-    if 165 <= h_deg < 210 and v_val > 0.4:
+    # Azzurro/Ciano Chiaro (Hue ciano/blu, alta luminosità)
+    if 180 <= h_deg < 210 and v_val > 0.7:
         return 1600
         
-    # Verde (tra 75 e 165 gradi)
+    # Verde (Hue verde, luminosità media/alta)
     if 75 <= h_deg < 165 and v_val > 0.4:
         return 1300
+
+    # Rosa (Hue rosso/magenta, alta luminosità, media/bassa saturazione)
+    if (h_deg >= 330 or h_deg < 20) and s_val > 0.15 and v_val > 0.6 and s_val < 0.6: # Tonalità rosse/magenta chiare e non troppo sature
+        return 1150
         
-    # Magenta/Rosa (tra 300 e 345 gradi o molto basso < 20 per i rossi viola)
-    if (300 <= h_deg < 345 or h_deg < 20) and v_val > 0.4:
+    # Magenta/Fucsia (Hue magenta/rosa scuro, luminosità media)
+    if (300 <= h_deg < 345 or h_deg < 20) and v_val > 0.4: # Tonalità magenta/rossastre
         return 1000 
 
-    # Rosso (Hue intorno a 0/360 gradi) - Scuro/Medio
-    if (h_deg >= 345 or h_deg < 20) and v_val < 0.6:
+    # Viola/Porpora (Hue tra blu e rosso)
+    if 270 <= h_deg < 300 and v_val > 0.2:
+        return 850
+        
+    # Rosso (Hue rosso, luminosità media)
+    if (h_deg >= 345 or h_deg < 20) and v_val < 0.6 and s_val > 0.4: # Assicurati che non sia già rosa o marrone
         return 700
 
-    # Blu (tra 210 e 285 gradi)
-    if 210 <= h_deg < 285 and v_val > 0.2:
+    # Blu (Hue blu, luminosità media)
+    if 210 <= h_deg < 270 and v_val > 0.2:
         return 400
         
-    # Fallback: Se non rientra in nessuna categoria specifica
+    # Marrone (Hue arancione/rosso, bassa luminosità, media/alta saturazione)
+    # Metto il marrone dopo i colori cromatici base, per catturare i rossi/arancioni scuri.
+    if (20 <= h_deg < 60 or h_deg >= 340 or h_deg < 20) and s_val > 0.2 and v_val < 0.4: # Tipicamente arancioni/rossi scuri
+        return 300
+        
+    # Fallback: Se non rientra in nessuna categoria specifica (es. colori molto desaturati non grigi, o sfumature complesse)
+    # Useremo una mappatura lineare semplice per questi casi, nel range di fallback
     normalized_value = (v_val - 0.1) / 0.9 
     if normalized_value < 0: normalized_value = 0 
     
+    # Mappiamo in un range intermedio per i fallback, per non sovrapporsi ai discreti specifici
     return min_f_fallback + normalized_value * (max_f_fallback - min_f_fallback) * 0.5 
 
 # --- Funzione per l'analisi del colore (basata su HUE e VALUE per classificazione) ---
@@ -126,8 +144,6 @@ def analyze_image_and_map_to_frequencies(image_path, min_freq_overall=20, max_fr
                 avg_s_val = bin_hsv_sums[i][1] / bin_pixel_counts[i]
                 avg_v_val = bin_hsv_sums[i][2] / bin_pixel_counts[i]
                 
-                # Assegna la frequenza usando la nuova logica di classificazione
-                # Passiamo min_freq_overall e max_freq_overall al fallback
                 frequency = get_frequency_for_color_class(avg_h_deg, avg_s_val, avg_v_val, min_freq_overall, max_freq_overall)
             else:
                 actual_hex_color_for_bin = "#CCCCCC" 
@@ -251,8 +267,10 @@ if uploaded_file is not None:
                 freq_type = ""
                 if freq < 200: freq_type = "Molto Bassa" 
                 elif freq < 500: freq_type = "Bassa"
-                elif freq < 2000: freq_type = "Media"
-                elif freq < 8000: freq_type = "Alta"
+                elif freq < 800: freq_type = "Medio-Bassa"
+                elif freq < 1200: freq_type = "Media"
+                elif freq < 1800: freq_type = "Medio-Alta"
+                elif freq < 2000: freq_type = "Alta"
                 else: freq_type = "Molto Alta"
                 
                 st.markdown(f"| {hue_range_str} | {percentage_str} | {frequency_str} | {freq_type} |", unsafe_allow_html=True)
@@ -262,14 +280,23 @@ if uploaded_file is not None:
             # --- Spiegazione Generale della Mappatura Aggiornata ---
             st.markdown("### 🔍 Come i Colori diventano Suoni:")
             st.markdown(f"""
-            Questa applicazione analizza i colori della tua immagine, li classifica in categorie (Bianco, Giallo, Rosso, ecc.)
-            e assegna una **frequenza sonora specifica e discreta** a ciascuna categoria.
+            Questa applicazione analizza i colori della tua immagine, li classifica in categorie specifiche
+            e assegna una **frequenza sonora discreta** a ciascuna categoria.
+            
+            Ecco la mappatura delle frequenze per i colori principali:
             
             * **Bianco:** {get_frequency_for_color_class(0, 0, 1, min_freq_input, max_freq_input)} Hz (frequenza più alta)
-            * **Giallo:** {get_frequency_for_color_class(60, 0.8, 0.9, min_freq_input, max_freq_input)} Hz
+            * **Giallo Chiaro:** {get_frequency_for_color_class(60, 0.8, 0.9, min_freq_input, max_freq_input)} Hz
+            * **Giallo:** {get_frequency_for_color_class(60, 0.8, 0.7, min_freq_input, max_freq_input)} Hz
+            * **Arancione:** {get_frequency_for_color_class(30, 0.8, 0.7, min_freq_input, max_freq_input)} Hz
+            * **Azzurro/Ciano Chiaro:** {get_frequency_for_color_class(190, 0.8, 0.8, min_freq_input, max_freq_input)} Hz
             * **Verde:** {get_frequency_for_color_class(120, 0.8, 0.5, min_freq_input, max_freq_input)} Hz
-            * **Blu:** {get_frequency_for_color_class(240, 0.8, 0.5, min_freq_input, max_freq_input)} Hz
+            * **Rosa:** {get_frequency_for_color_class(350, 0.4, 0.7, min_freq_input, max_freq_input)} Hz
+            * **Magenta/Fucsia:** {get_frequency_for_color_class(320, 0.8, 0.5, min_freq_input, max_freq_input)} Hz
+            * **Viola/Porpora:** {get_frequency_for_color_class(285, 0.7, 0.4, min_freq_input, max_freq_input)} Hz
             * **Rosso:** {get_frequency_for_color_class(0, 0.8, 0.5, min_freq_input, max_freq_input)} Hz
+            * **Blu:** {get_frequency_for_color_class(240, 0.8, 0.5, min_freq_input, max_freq_input)} Hz
+            * **Marrone:** {get_frequency_for_color_class(30, 0.6, 0.3, min_freq_input, max_freq_input)} Hz
             * **Grigio:** {get_frequency_for_color_class(0, 0.05, 0.5, min_freq_input, max_freq_input)} Hz
             * **Nero:** {get_frequency_for_color_class(0, 0, 0, min_freq_input, max_freq_input)} Hz (frequenza più bassa)
             
@@ -282,15 +309,20 @@ if uploaded_file is not None:
             hue_gradient_html = """
             <div style="width:100%; height:30px; 
                         background: linear-gradient(to right, 
-                        #000000, #808080, #FF0000, #FFFF00, #00FF00, #0000FF, #FFFFFF);">
+                        #000000, #402000, #808080, #0000FF, #800080, #FF0000, #FFC0CB, #00FF00, #FFFF00, #FF8000, #00FFFF, #FFFFFF);">
             </div>
             <div style="display:flex; justify-content:space-between; font-size:0.8em;">
                 <span>Nero (20 Hz)</span>
+                <span>Marrone (300 Hz)</span>
                 <span>Grigio (200 Hz)</span>
-                <span>Rosso (700 Hz)</span>
-                <span>Giallo (1900 Hz)</span>
-                <span>Verde (1300 Hz)</span>
                 <span>Blu (400 Hz)</span>
+                <span>Viola (850 Hz)</span>
+                <span>Rosso (700 Hz)</span>
+                <span>Rosa (1150 Hz)</span>
+                <span>Verde (1300 Hz)</span>
+                <span>Giallo (1900 Hz)</span>
+                <span>Arancione (1700 Hz)</span>
+                <span>Azzurro (1600 Hz)</span>
                 <span>Bianco (2000 Hz)</span>
             </div>
             """
