@@ -89,17 +89,20 @@ def get_hue_range_name(hue_start, hue_end):
     # Hue values: 0=Red, 60=Yellow, 120=Green, 180=Cyan, 240=Blue, 300=Magenta, 360=Red
     
     # Calcola il punto medio per una migliore classificazione
-    mid_hue = (hue_start + hue_end) / 2
-    if hue_start > hue_end: # Per il caso che attraversa 0/360 (es. 330-30)
+    # Gestisce il wrap-around (es. da 330 a 30)
+    if hue_start > hue_end: 
+        # Range che attraversa 0/360, calcola il punto medio "effettivo" sul cerchio
         mid_hue = (hue_start + hue_end + 360) / 2
         if mid_hue >= 360: mid_hue -= 360
+    else:
+        mid_hue = (hue_start + hue_end) / 2
 
     if 345 <= mid_hue <= 360 or 0 <= mid_hue < 15:
         return "Rosso"
     elif 15 <= mid_hue < 45:
         return "Rosso-Arancio"
     elif 45 <= mid_hue < 75:
-        return "Giallo-Arancio"
+        return "Arancio-Giallo"
     elif 75 <= mid_hue < 105:
         return "Giallo-Verde"
     elif 105 <= mid_hue < 135:
@@ -119,7 +122,7 @@ def get_hue_range_name(hue_start, hue_end):
     elif 315 <= mid_hue < 345:
         return "Magenta-Rosso"
     else:
-        return "Indefinito" # Should not happen with 0-360 range
+        return "Sconosciuto" # Should not happen with valid hue values
 
 # --- Funzione per l'analisi del colore ---
 def analyze_image_and_map_to_frequencies(image_path, n_bins=5):
@@ -133,7 +136,11 @@ def analyze_image_and_map_to_frequencies(image_path, n_bins=5):
         bin_hsv_sums = np.zeros((n_bins, 3), dtype=float) 
         bin_pixel_counts = np.zeros(n_bins, dtype=int)
         
+        # Adjust bin edges to avoid 360 falling into new bin
         temp_bin_edges_for_digitize = np.linspace(0, 360, n_bins + 1)
+        # Ensure the last bin includes 360 if it's the max range.
+        # For hue, 360 is the same as 0, so we use 0-359.99 for bins typically.
+        # np.digitize usually handles upper bounds correctly.
         
         hue_values_all_pixels = []
 
@@ -145,17 +152,22 @@ def analyze_image_and_map_to_frequencies(image_path, n_bins=5):
             
             hue_values_all_pixels.append(hue_degrees) 
 
+            # np.digitize returns an array of bin indices for each value in `hue_degrees`
+            # The indices are 1-based by default for the first return.
+            # We want 0-based for array indexing.
             bin_idx = np.digitize(hue_degrees, temp_bin_edges_for_digitize) - 1
             
-            if bin_idx == n_bins:
+            # Ensure bin_idx is within valid range [0, n_bins-1]
+            if bin_idx == n_bins: # If a value falls exactly on the last edge
                 bin_idx = n_bins - 1
-            if bin_idx < 0:
+            if bin_idx < 0: # Should not happen with 0 as min
                 bin_idx = 0
 
             bin_rgb_sums[bin_idx] += [r, g, b]
             bin_hsv_sums[bin_idx] += [hue_degrees, s, v] 
             bin_pixel_counts[bin_idx] += 1
         
+        # Recalculate histogram to get accurate counts per bin (for weights)
         hist, bin_edges_hist = np.histogram(hue_values_all_pixels, bins=n_bins, range=(0, 360)) 
         
         total_pixels = np.sum(hist)
@@ -175,13 +187,13 @@ def analyze_image_and_map_to_frequencies(image_path, n_bins=5):
                 
                 frequency = get_frequency_for_color_class(avg_h_deg, avg_s_val, avg_v_val)
             else:
-                actual_hex_color_for_bin = "#CCCCCC" 
-                frequency = 20 # Frequenza minima di default
-                avg_v_val = 0 # Valore di luminosità basso di default
+                actual_hex_color_for_bin = "#CCCCCC" # Default grey if bin is empty
+                frequency = 20 # Default minimal frequency
+                avg_v_val = 0 # Default low brightness
             
             all_bin_actual_colors_hex.append(actual_hex_color_for_bin)
 
-            if hist_normalized[i] > 0: 
+            if hist_normalized[i] > 0: # Only add if there are pixels in this bin
                 amplitude_weight = hist_normalized[i]
                 
                 frequencies_and_weights.append((frequency, amplitude_weight, int(bin_edges_hist[i]), int(bin_edges_hist[i+1]), actual_hex_color_for_bin, avg_v_val))
@@ -230,7 +242,7 @@ def generate_audio_wave(frequencies_and_weights_with_vval, duration_seconds, sam
                 combined_amplitude += get_waveform_function("sine")(t, freq) * amplitude_component
                 combined_amplitude += get_waveform_function("square")(t, freq) * amplitude_component
                 combined_amplitude += get_waveform_function("sawtooth")(t, freq) * amplitude_component
-                continue 
+                continue # Skip to next frequency if all three are mixed
             elif waveform_mode == "by_brightness":
                 if v_val > 0.7: # Colori Chiari (Luminosità Alta)
                     current_waveform_func = get_waveform_function(bright_wave)
@@ -240,7 +252,7 @@ def generate_audio_wave(frequencies_and_weights_with_vval, duration_seconds, sam
                     current_waveform_func = get_waveform_function(medium_wave)
             
             if current_waveform_func is None:
-                 current_waveform_func = get_waveform_function("sine")
+                 current_waveform_func = get_waveform_function("sine") # Fallback to sine if nothing selected
 
             amplitude = current_waveform_func(t, freq) * (weight / total_weight)
             combined_amplitude += amplitude
@@ -248,6 +260,7 @@ def generate_audio_wave(frequencies_and_weights_with_vval, duration_seconds, sam
     max_amplitude = np.max(np.abs(combined_amplitude))
     if max_amplitude > 0:
         combined_amplitude /= max_amplitude # Normalizza l'ampiezza per evitare clipping
+        combined_amplitude *= 0.9 # Riduce leggermente per sicurezza dopo normalizzazione
 
     # Applica fade-in e fade-out al segmento generato
     if fade_in_duration > 0:
@@ -341,6 +354,8 @@ if uploaded_files:
         # Calcolo durata totale del brano
         if len(uploaded_files) > 0:
             total_estimated_duration = (len(uploaded_files) * segment_duration_raw) - ((len(uploaded_files) - 1) * overlap_duration)
+            if total_estimated_duration < segment_duration_raw and len(uploaded_files) > 0: # Ensure minimum duration is at least one segment
+                total_estimated_duration = segment_duration_raw
         else:
             total_estimated_duration = 0
 
@@ -465,6 +480,7 @@ if uploaded_files:
                     for freq, weight, hue_start, hue_end, rep_hex, v_val in frequencies_and_weights_with_vval:
                         hue_name = get_hue_range_name(hue_start, hue_end)
                         
+                        # Added vertical-align:middle to the span for better alignment of color swatch
                         hue_range_str = f"**{hue_name}** <span style='background-color:{rep_hex}; padding: 2px 5px; border-radius:3px; display:inline-block; vertical-align:middle;'>&nbsp;</span> ({hue_start}°-{hue_end}°)"
                         percentage_str = f"{weight*100:.1f}%"
                         frequency_str = f"{int(freq)}" # Arrotonda a intero
@@ -510,38 +526,40 @@ if uploaded_files:
     Oltre alla frequenza (che determina l'altezza del suono), ora puoi scegliere anche il **timbro** (la "qualità" del suono)
     selezionando diversi tipi di onde:
     
-    * **Sine Wave:** Il suono più puro, senza armoniche. Suona morbido e "dolce".
-    * **Square Wave:** Contiene solo armoniche dispari. Ha un suono più "cavo", simile a un clarinetto o ad alcuni sintetizzatori.
-    * **Sawtooth Wave:** Contiene tutte le armoniche. Ha un suono più "brillante", simile a un violino o a un ottoni.
+    * **Sine Wave (Seno):** Il suono più puro, senza armoniche. Suona morbido e "dolce".
+    * **Square Wave (Onda Quadra):** Contiene solo armoniche dispari. Ha un suono più "cavo", simile a un clarinetto o ad alcuni sintetizzatori.
+    * **Sawtooth Wave (Onda a Dente di Sega):** Contiene tutte le armoniche. Ha un suono più "brillante" e ricco, simile a un violino o a un ottoni.
     
     Puoi scegliere un'unica onda per tutti i colori, una miscela di tutte e tre, oppure lasciare che l'applicazione
     assegni l'onda in base alla luminosità del colore, con assegnazioni personalizzabili:
     * **Colori Chiari (Luminosità Alta):** Puoi scegliere il tipo di onda.
     * **Colori Medi (Luminosità Media):** Puoi scegliere il tipo di onda.
     * **Colori Scuri (Luminosità Bassa):** Puoi scegliere il tipo di onda.
-    
     """)
     
     st.markdown("#### Mappatura Tonalità (Hue) ➡️ Frequenza Base:")
+    # Using a simpler flexbox for the labels below the gradient
     st.markdown("""
-    <div style="width:100%; position:relative; height:150px; background: 
-        linear-gradient(to right, 
-        #FF0000 0%, #FF8000 10%, #FFFF00 20%, #80FF00 30%, #00FF00 40%, 
-        #00FF80 50%, #00FFFF 60%, #0080FF 70%, #0000FF 80%, #8000FF 90%, #FF00FF 100%); 
-        border-radius: 10px; overflow: hidden; margin-bottom: 20px;">
-        
-        <div style="position:absolute; bottom:5px; width:100%; display:flex; justify-content:space-between; font-size:0.75em; color:white; text-shadow: 1px 1px 2px black;">
-            <span style="position:absolute; left:0%; transform:translateX(-50%); text-align:center;">Red<br>(0°)<br>700Hz</span>
-            <span style="position:absolute; left:16.6%; transform:translateX(-50%); text-align:center;">Yellow<br>(60°)<br>1900Hz</span>
-            <span style="position:absolute; left:33.3%; transform:translateX(-50%); text-align:center;">Green<br>(120°)<br>1300Hz</span>
-            <span style="position:absolute; left:50%; transform:translateX(-50%); text-align:center;">Cyan<br>(180°)<br>1600Hz</span>
-            <span style="position:absolute; left:66.6%; transform:translateX(-50%); text-align:center;">Blue<br>(240°)<br>400Hz</span>
-            <span style="position:absolute; left:83.3%; transform:translateX(-50%); text-align:center;">Magenta<br>(300°)<br>1000Hz</span>
-            <span style="position:absolute; left:100%; transform:translateX(-50%); text-align:center;">Red<br>(360°)<br>700Hz</span>
+    <div style="width:100%; position:relative; height:150px; border-radius: 10px; overflow: hidden; margin-bottom: 20px;">
+        <div style="width:100%; height:80px; background: 
+            linear-gradient(to right, 
+            #FF0000 0%, #FF8000 10%, #FFFF00 20%, #80FF00 30%, #00FF00 40%, 
+            #00FF80 50%, #00FFFF 60%, #0080FF 70%, #0000FF 80%, #8000FF 90%, #FF00FF 100%);">
+        </div>
+        <div style="display:flex; justify-content:space-between; width:100%; position:absolute; top:80px; left:0; right:0; padding: 0 10px; box-sizing: border-box;">
+            <div style="text-align:center; flex-basis:16.6%; font-size:0.75em;">Red<br>(0°)<br>700Hz</div>
+            <div style="text-align:center; flex-basis:16.6%; font-size:0.75em;">Yellow<br>(60°)<br>1900Hz</div>
+            <div style="text-align:center; flex-basis:16.6%; font-size:0.75em;">Green<br>(120°)<br>1300Hz</div>
+            <div style="text-align:center; flex-basis:16.6%; font-size:0.75em;">Cyan<br>(180°)<br>1600Hz</div>
+            <div style="text-align:center; flex-basis:16.6%; font-size:0.75em;">Blue<br>(240°)<br>400Hz</div>
+            <div style="text-align:center; flex-basis:16.6%; font-size:0.75em;">Magenta<br>(300°)<br>1000Hz</div>
+            <div style="text-align:center; flex-basis:0%; font-size:0.75em; visibility:hidden;">Red (360°)<br>700Hz</div>
+        </div>
+        <div style="text-align:center; width:100%; font-size:0.75em; margin-top:10px;">
+            <p style="font-size:0.85em;"><i>Le frequenze intermedie sono interpolate tra questi punti di ancoraggio.<br>
+            I colori acromatici (bianco, nero, grigio) e alcuni colori speciali (rosa, marrone, giallo chiaro) hanno frequenze fisse dedicate.</i></p>
         </div>
     </div>
-    <p style="font-size:0.85em; text-align:center;"><i>Le frequenze intermedie sono interpolate tra questi punti di ancoraggio.<br>
-    I colori acromatici (bianco, nero, grigio) e alcuni colori speciali (rosa, marrone, giallo chiaro) hanno frequenze fisse dedicate.</i></p>
     """, unsafe_allow_html=True)
     
     st.markdown("---")
@@ -556,28 +574,27 @@ if uploaded_files:
                 # Determina la durata per ogni segmento in base alla modalità
                 segment_duration = 0
                 current_fade_in_duration = 0 # Inizializza per uso nel loop
-                current_fade_out_duration = 0 # Inizializza per uso nel loop
 
                 if sonification_mode == "Singola Immagine (un accordo per immagine)":
                     segment_duration = duration_input # Prende il valore dallo slider diretto
+                    # Per singola immagine, nessun fade-in/out speciale a meno che non sia definito altrove
                 else: # Brano Sperimentale
                     segment_duration = beats_per_image * tempo_per_beat
                     current_fade_in_duration = overlap_duration # Fade-in uguale alla durata di sovrapposizione
-                    # Qui non applichiamo un fade-out al singolo segmento se non l'ultimo,
-                    # perché vogliamo che si "mischino" continuamente.
-                    # Un fade-out generale verrà applicato alla fine del brano completo.
                 
                 # Genera i segmenti audio INDIVIDUALI prima di miscelarli
                 for img_data in st.session_state.processed_images_data:
                     frequencies_and_weights_to_use = img_data['frequencies_and_weights']
                     
                     audio_data_segment = None
+                    # No fade out duration passed to generate_audio_wave for individual segments in experimental mode
+                    # as fade out will be handled by final mixing logic or global fade out.
                     if waveform_selection_mode == "Onda Singola per tutti i Colori":
                         if selected_single_waveform == "Mixed (Sine + Square + Sawtooth)":
                             audio_data_segment = generate_audio_wave(frequencies_and_weights_to_use, segment_duration, 
                                                             waveform_mode="mixed_all", sample_rate=sample_rate,
                                                             fade_in_duration=current_fade_in_duration if sonification_mode == "Brano Sperimentale (sequenza e mixaggio)" else 0,
-                                                            fade_out_duration=current_fade_out_duration if sonification_mode == "Brano Sperimentale (sequenza e mixaggio)" else 0)
+                                                            fade_out_duration=0) # No segment-level fade-out for continuous mix
                         else:
                             waveform_map_internal = {
                                 "Sine": "sine",
@@ -588,7 +605,7 @@ if uploaded_files:
                                                             waveform_mode="single", 
                                                             single_waveform_type=waveform_map_internal[selected_single_waveform], sample_rate=sample_rate,
                                                             fade_in_duration=current_fade_in_duration if sonification_mode == "Brano Sperimentale (sequenza e mixaggio)" else 0,
-                                                            fade_out_duration=current_fade_out_duration if sonification_mode == "Brano Sperimentale (sequenza e mixaggio)" else 0)
+                                                            fade_out_duration=0) # No segment-level fade-out for continuous mix
                     else: # Onda per Luminosità del Colore
                         audio_data_segment = generate_audio_wave(frequencies_and_weights_to_use, segment_duration, 
                                                         waveform_mode="by_brightness",
@@ -596,7 +613,7 @@ if uploaded_files:
                                                         medium_wave=medium_wave_type,
                                                         dark_wave=dark_wave_type, sample_rate=sample_rate,
                                                         fade_in_duration=current_fade_in_duration if sonification_mode == "Brano Sperimentale (sequenza e mixaggio)" else 0,
-                                                        fade_out_duration=current_fade_out_duration if sonification_mode == "Brano Sperimentale (sequenza e mixaggio)" else 0)
+                                                        fade_out_duration=0) # No segment-level fade-out for continuous mix
                     
                     if audio_data_segment is not None:
                         all_raw_audio_segments.append(audio_data_segment)
@@ -606,48 +623,48 @@ if uploaded_files:
                 
                 if all_raw_audio_segments:
                     if sonification_mode == "Singola Immagine (un accordo per immagine)":
-                        # Per singolo audio, prendi il primo segmento e applica fade-in/out se necessario (qui non definiti negli slider per questa modalità)
+                        # For single image, ensure it also has a proper fade-in/out if it's the only one.
+                        # For simplicity, we just take the first segment and assume generate_audio_wave already applied any requested fades based on its direct duration_input.
                         final_audio_data = all_raw_audio_segments[0] 
                     else: # Brano Sperimentale con Mixing Continuo
                         
-                        # Calcola la lunghezza totale necessaria per il brano mixato
-                        # Ogni segmento dura segment_duration
-                        # Il successivo inizia dopo (segment_duration - overlap_duration)
-                        # Quindi l'avanzamento netto per segmento è (segment_duration - overlap_duration)
-                        # Più il tempo effettivo del primo segmento
-                        
+                        # Calculate total length needed for the mixed track
+                        # Total duration is length of first segment + (length of remaining segments * (segment_duration - overlap_duration))
                         total_duration_calculated = segment_duration + (len(all_raw_audio_segments) - 1) * (segment_duration - overlap_duration)
-                        if len(all_raw_audio_segments) == 1: # Se c'è solo un'immagine
+                        if len(all_raw_audio_segments) == 1: # If there's only one image in experimental mode
                              total_duration_calculated = segment_duration
                         
                         total_samples_needed = int(total_duration_calculated * sample_rate)
                         
-                        if total_samples_needed < 0: 
-                            total_samples_needed = int(segment_duration * sample_rate) # Minimum: first segment
+                        if total_samples_needed < 0: # Safety check for extreme overlap
+                            total_samples_needed = int(segment_duration * sample_rate) 
                         
                         final_audio_data = np.zeros(total_samples_needed, dtype=np.float32)
                         
                         current_offset_samples = 0
+                        # This is the step for the start of the next segment
                         offset_per_segment_samples = int((segment_duration - overlap_duration) * sample_rate)
-
+                        
+                        # Ensure offset_per_segment_samples is not negative or zero if overlap is too large
+                        if offset_per_segment_samples < 0:
+                            offset_per_segment_samples = 0 # No forward progress, all segments start at same point for extreme overlap
+                        
                         for i, segment in enumerate(all_raw_audio_segments):
                             segment_samples = len(segment)
                             
-                            # Calcola la fine del segmento corrente nel buffer finale
+                            # Calculate the end position for the current segment in the final buffer
                             end_pos = current_offset_samples + segment_samples
                             
-                            # Estendi il final_audio_data se necessario
+                            # If the segment goes beyond the pre-calculated total duration, clip it
                             if end_pos > len(final_audio_data):
-                                temp_extend = np.zeros(end_pos - len(final_audio_data), dtype=np.float32)
-                                final_audio_data = np.concatenate((final_audio_data, temp_extend))
+                                segment_to_add = segment[:len(final_audio_data) - current_offset_samples]
+                            else:
+                                segment_to_add = segment
                             
-                            # Aggiungi il segmento al mix complessivo
-                            # Assicurati che il segmento non superi la dimensione dell'array finale
-                            actual_segment_length_to_add = min(segment_samples, len(final_audio_data) - current_offset_samples)
-                            if actual_segment_length_to_add > 0:
-                                final_audio_data[current_offset_samples : current_offset_samples + actual_segment_length_to_add] += segment[:actual_segment_length_to_add]
+                            if len(segment_to_add) > 0:
+                                final_audio_data[current_offset_samples : current_offset_samples + len(segment_to_add)] += segment_to_add
                             
-                            # Aggiorna l'offset per il prossimo segmento
+                            # Update the offset for the next segment
                             current_offset_samples += offset_per_segment_samples
                     
                     # Normalizza il volume del brano finale per evitare clipping dopo la somma
