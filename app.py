@@ -491,6 +491,32 @@ with col_left:
 
         st.info(f"Ogni immagine durerà {segment_duration_raw:.1f} secondi. Durata totale stimata del brano: {total_estimated_duration:.1f} secondi.")
 
+        st.markdown("---")
+        # Nuova opzione per applicare la scansione a ciascuna foto nel brano sperimentale
+        apply_scan_to_each_photo = st.checkbox(
+            "Applica scansione a ciascuna foto (per un brano più dinamico)",
+            key="apply_scan_to_each_photo_checkbox"
+        )
+
+        if apply_scan_to_each_photo:
+            st.markdown("#### Impostazioni Scansione per Foto (nel Brano Sperimentale):")
+            num_slices_per_image = st.slider(
+                "Numero di Fette (segmenti) per ogni immagine",
+                min_value=5,
+                max_value=100, # Max slices per individual image scan in this mode
+                value=20,
+                step=5,
+                help="Definisce in quanti segmenti ogni singola immagine verrà divisa per l'analisi interna. Più fette = più dettaglio sonoro per ogni foto."
+            )
+            scan_direction_per_image = st.selectbox(
+                "Direzione di Scansione per ogni immagine:",
+                ["Sinistra a Destra", "Alto a Basso"],
+                key="scan_direction_per_image_selector",
+                help="Scegli la direzione con cui ogni immagine verrà 'letta' internamente."
+            )
+            st.info(f"Ogni fetta della scansione interna durerà circa {(segment_duration_raw / num_slices_per_image):.2f} secondi.")
+        st.markdown("---")
+
     else: # Brano basato su Scansione Immagine
         st.markdown("#### Impostazioni Scansione Immagine:")
         if len(uploaded_files) > 1:
@@ -658,31 +684,99 @@ with col_left:
                         frequencies_and_weights_to_use = img_data['frequencies_and_weights']
                         
                         audio_data_segment = None
-                        if waveform_selection_mode == "Onda Singola per tutti i Colori":
-                            if selected_single_waveform == "Mixed (Sine + Square + Sawtooth)":
-                                audio_data_segment = generate_audio_wave(frequencies_and_weights_to_use, segment_duration, 
-                                                                waveform_mode="mixed_all", sample_rate=sample_rate,
-                                                                fade_in_duration=current_fade_in_duration,
-                                                                fade_out_duration=0) 
+
+                        if apply_scan_to_each_photo:
+                            # Perform scan for this individual image
+                            img_original = Image.open(io.BytesIO(img_data['image_bytes'])).convert('RGB')
+                            width, height = img_original.size
+                            
+                            audio_segments_from_internal_scan = []
+                            # Calculate duration per internal slice
+                            duration_per_internal_slice = segment_duration / num_slices_per_image
+                            fade_duration_per_internal_slice = duration_per_internal_slice * 0.1
+
+                            for i in range(num_slices_per_image):
+                                if scan_direction_per_image == "Sinistra a Destra":
+                                    slice_width = width // num_slices_per_image
+                                    left = i * slice_width
+                                    right = (i + 1) * slice_width
+                                    if i == num_slices_per_image - 1:
+                                        right = width
+                                    img_slice = img_original.crop((left, 0, right, height))
+                                else: # Alto a Basso
+                                    slice_height = height // num_slices_per_image
+                                    top = i * slice_height
+                                    bottom = (i + 1) * slice_height
+                                    if i == num_slices_per_image - 1:
+                                        bottom = height
+                                    img_slice = img_original.crop((0, top, width, bottom))
+                                
+                                frequencies_and_weights_slice, _, _, _ = analyze_image_and_map_to_frequencies(img_slice, n_bins_input)
+                                
+                                internal_segment_audio = None
+                                if waveform_selection_mode == "Onda Singola per tutti i Colori":
+                                    if selected_single_waveform == "Mixed (Sine + Square + Sawtooth)":
+                                        internal_segment_audio = generate_audio_wave(frequencies_and_weights_slice, duration_per_internal_slice, 
+                                                                        waveform_mode="mixed_all", sample_rate=sample_rate,
+                                                                        fade_in_duration=fade_duration_per_internal_slice, fade_out_duration=fade_duration_per_internal_slice)
+                                    else:
+                                        waveform_map_internal = {
+                                            "Sine": "sine", "Square": "square", "Sawtooth": "sawtooth"
+                                        }
+                                        internal_segment_audio = generate_audio_wave(frequencies_and_weights_slice, duration_per_internal_slice, 
+                                                                        waveform_mode="single", 
+                                                                        single_waveform_type=waveform_map_internal[selected_single_waveform], sample_rate=sample_rate,
+                                                                        fade_in_duration=fade_duration_per_internal_slice, fade_out_duration=fade_duration_per_internal_slice)
+                                else:
+                                    internal_segment_audio = generate_audio_wave(frequencies_and_weights_slice, duration_per_internal_slice, 
+                                                                    waveform_mode="by_brightness",
+                                                                    bright_wave=bright_wave_type,
+                                                                    medium_wave=medium_wave_type,
+                                                                    dark_wave=dark_wave_type, sample_rate=sample_rate,
+                                                                    fade_in_duration=fade_duration_per_internal_slice, fade_out_duration=fade_duration_per_internal_slice)
+
+                                if internal_segment_audio is not None and len(internal_segment_audio) > 0:
+                                    audio_segments_from_internal_scan.append(internal_segment_audio)
+                                else:
+                                    audio_segments_from_internal_scan.append(np.zeros(int(duration_per_internal_slice * sample_rate), dtype=np.float32))
+                            
+                            if audio_segments_from_internal_scan:
+                                audio_data_segment = np.concatenate(audio_segments_from_internal_scan)
+                                # Ensure the segment matches the expected total duration
+                                expected_samples = int(segment_duration * sample_rate)
+                                if len(audio_data_segment) > expected_samples:
+                                    audio_data_segment = audio_data_segment[:expected_samples]
+                                elif len(audio_data_segment) < expected_samples:
+                                    audio_data_segment = np.pad(audio_data_segment, (0, expected_samples - len(audio_data_segment)), 'constant')
                             else:
-                                waveform_map_internal = {
-                                    "Sine": "sine",
-                                    "Square": "square",
-                                    "Sawtooth": "sawtooth"
-                                }
+                                audio_data_segment = np.zeros(int(segment_duration * sample_rate), dtype=np.float32)
+
+                        else: # No internal scan, just a single chord for the image
+                            if waveform_selection_mode == "Onda Singola per tutti i Colori":
+                                if selected_single_waveform == "Mixed (Sine + Square + Sawtooth)":
+                                    audio_data_segment = generate_audio_wave(frequencies_and_weights_to_use, segment_duration, 
+                                                                    waveform_mode="mixed_all", sample_rate=sample_rate,
+                                                                    fade_in_duration=current_fade_in_duration,
+                                                                    fade_out_duration=0) 
+                                else:
+                                    waveform_map_internal = {
+                                        "Sine": "sine",
+                                        "Square": "square",
+                                        "Sawtooth": "sawtooth"
+                                    }
+                                    audio_data_segment = generate_audio_wave(frequencies_and_weights_to_use, segment_duration, 
+                                                                    waveform_mode="single", 
+                                                                    single_waveform_type=waveform_map_internal[selected_single_waveform], sample_rate=sample_rate,
+                                                                    fade_in_duration=current_fade_in_duration,
+                                                                    fade_out_duration=0) 
+                            else: 
                                 audio_data_segment = generate_audio_wave(frequencies_and_weights_to_use, segment_duration, 
-                                                                waveform_mode="single", 
-                                                                single_waveform_type=waveform_map_internal[selected_single_waveform], sample_rate=sample_rate,
+                                                                waveform_mode="by_brightness",
+                                                                bright_wave=bright_wave_type,
+                                                                medium_wave=medium_wave_type,
+                                                                dark_wave=dark_wave_type, sample_rate=sample_rate,
                                                                 fade_in_duration=current_fade_in_duration,
                                                                 fade_out_duration=0) 
-                        else: 
-                            audio_data_segment = generate_audio_wave(frequencies_and_weights_to_use, segment_duration, 
-                                                            waveform_mode="by_brightness",
-                                                            bright_wave=bright_wave_type,
-                                                            medium_wave=medium_wave_type,
-                                                            dark_wave=dark_wave_type, sample_rate=sample_rate,
-                                                            fade_in_duration=current_fade_in_duration,
-                                                            fade_out_duration=0) 
                         
                         if audio_data_segment is not None:
                             all_raw_audio_segments.append(audio_data_segment)
@@ -719,7 +813,7 @@ with col_left:
                             
                             current_offset_samples += offset_per_segment_samples
                 
-                else: # Brano basato su Scansione Immagine
+                else: # Brano basato su Scansione Immagine (singola immagine)
                     if not st.session_state.processed_images_data: # If no images uploaded at all
                         st.error("Carica una singola immagine per utilizzare la modalità di scansione.")
                     else:
@@ -835,7 +929,7 @@ with col_right:
 
             with col_chart1:
                 st.markdown("##### Distribuzione Tonalità Colore")
-                fig_color, ax_color = plt.subplots(figsize=(6, 4))
+                fig_color, ax_color = plt.subplots(figsize=(5, 3)) # Reduced figsize
                 hue_bin_labels = [f"{int(bin_edges[i])}°-{int(bin_edges[i+1])}°" for i in range(len(bin_edges)-1)]
                 
                 ax_color.bar(hue_bin_labels, hist_normalized * 100, color=all_bin_actual_colors_hex) 
@@ -854,7 +948,7 @@ with col_right:
                 
                 bar_colors_freq = [item[4] for item in frequencies_and_weights_with_vval]
 
-                fig_freq, ax_freq = plt.subplots(figsize=(6, 4))
+                fig_freq, ax_freq = plt.subplots(figsize=(5, 3)) # Reduced figsize
                 ax_freq.bar(freq_labels, freq_weights, color=bar_colors_freq)
                 ax_freq.set_xlabel("Frequenza (Hz)")
                 ax_freq.set_ylabel("Peso nell'Accordo (%)")
