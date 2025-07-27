@@ -9,10 +9,10 @@ import colorsys # Per convertire RGB a HSV
 from scipy import signal # Per onde quadre e a sega
 
 # Configurazione della pagina
-st.set_page_config(page_title="🎨🎵 Color Sonification by loop507", layout="centered")
+st.set_page_config(page_title="🎨🎵 Sonificazione dei Colori by loop507", layout="centered")
 
-st.markdown("<h1>🎨🎵 Color Sonification <span style='font-size:0.5em;'>by loop507</span></h1>", unsafe_allow_html=True)
-st.write("Upload a photo and generate a sound based on its colors!")
+st.markdown("<h1>🎨🎵 Sonificazione dei Colori <span style='font-size:0.5em;'>by loop507</span></h1>", unsafe_allow_html=True)
+st.write("Carica una foto e genera un suono basato sui suoi colori!")
 
 # --- Mappatura delle Frequenze per Classificazione Colore ---
 def get_frequency_for_color_class(h_deg, s_val, v_val):
@@ -24,37 +24,37 @@ def get_frequency_for_color_class(h_deg, s_val, v_val):
     """
     
     # 1. Priorità: Colori Acromatici (Bianco, Nero, Grigio) - Basati su Saturazione e Luminosità
-    if s_val < 0.15: # Low saturation indicates achromatic colors
-        if v_val > 0.9: # Very bright = White
-            return 2000 # Frequency for White
-        elif v_val < 0.1: # Very dark = Black
-            return 20 # Frequency for Black
-        else: # Intermediate brightness, low saturation = Gray
-            return 200 # Frequency for Gray
+    if s_val < 0.15: # Bassa saturazione indica colori acromatici
+        if v_val > 0.9: # Molto luminoso = Bianco
+            return 2000 # Frequenza per il Bianco
+        elif v_val < 0.1: # Molto scuro = Nero
+            return 20 # Frequenza per il Nero
+        else: # Luminosità intermedia, bassa saturazione = Grigio
+            return 200 # Frequenza per il Grigio
             
     # 2. Priorità: Colori Speciali che dipendono molto da Saturazione/Valore
     
-    # Light Yellow (Yellow hue, very high brightness)
+    # Giallo Chiaro (Hue giallo, luminosità molto alta)
     if 45 <= h_deg < 75 and v_val > 0.8:
-        return 1950 # Frequency for Light Yellow
+        return 1950 # Frequenza per il Giallo Chiaro
         
-    # Pink (Red/magenta hue, high brightness, medium/low saturation)
+    # Rosa (Hue rosso/magenta, alta luminosità, saturazione media/bassa)
     if (h_deg >= 330 or h_deg < 20) and s_val > 0.15 and v_val > 0.6 and s_val < 0.6:
         return 1150
         
-    # Brown (Orange/red hue, low brightness, medium/high saturation)
+    # Marrone (Hue arancione/rosso, bassa luminosità, saturazione media/alta)
     if (20 <= h_deg < 60 or h_deg >= 340 or h_deg < 20) and s_val > 0.2 and v_val < 0.4:
         return 300
     
-    # 3. Interpolation based on Hue for Standard Chromatic Colors
+    # 3. Interpolazione basata sull'Hue per i Colori Cromatici Standard
     hue_freq_anchors = [
-        (0, 700),    # Red
-        (60, 1900),  # Yellow
-        (120, 1300), # Green
-        (180, 1600), # Cyan
-        (240, 400),  # Blue
+        (0, 700),    # Rosso
+        (60, 1900),  # Giallo
+        (120, 1300), # Verde
+        (180, 1600), # Ciano
+        (240, 400),  # Blu
         (300, 1000), # Magenta
-        (360, 700)   # Red (to close the circle)
+        (360, 700)   # Rosso (per chiudere il cerchio)
     ]
     
     if h_deg >= 359.99: 
@@ -70,7 +70,7 @@ def get_frequency_for_color_class(h_deg, s_val, v_val):
             idx2 = i + 1
             break
     if h_deg_for_interp == 360:
-        return 700 # Red
+        return 700 # Rosso
 
     h1, f1 = hue_freq_anchors[idx1]
     h2, f2 = hue_freq_anchors[idx2]
@@ -139,8 +139,8 @@ def analyze_image_and_map_to_frequencies(image_path, n_bins=5):
                 frequency = get_frequency_for_color_class(avg_h_deg, avg_s_val, avg_v_val)
             else:
                 actual_hex_color_for_bin = "#CCCCCC" 
-                frequency = 20 # Default min freq
-                avg_v_val = 0 # Default low value
+                frequency = 20 # Frequenza minima di default
+                avg_v_val = 0 # Valore di luminosità basso di default
             
             all_bin_actual_colors_hex.append(actual_hex_color_for_bin)
 
@@ -151,7 +151,7 @@ def analyze_image_and_map_to_frequencies(image_path, n_bins=5):
             
         return frequencies_and_weights, hist_normalized, bin_edges_hist, all_bin_actual_colors_hex
     except Exception as e:
-        st.error(f"Error analyzing image: {e}")
+        st.error(f"Errore durante l'analisi dell'immagine: {e}")
         return [], np.array([]), np.array([]), []
 
 # --- Funzione per generare un'onda sinusoidale o un accordo ---
@@ -194,11 +194,11 @@ def generate_audio_wave(frequencies_and_weights_with_vval, duration_seconds, sam
                 combined_amplitude += get_waveform_function("sawtooth")(t, freq) * amplitude_component
                 continue 
             elif waveform_mode == "by_brightness":
-                if v_val > 0.7: # Bright Colors
+                if v_val > 0.7: # Colori Chiari (Luminosità Alta)
                     current_waveform_func = get_waveform_function(bright_wave)
-                elif v_val < 0.3: # Dark Colors
+                elif v_val < 0.3: # Colori Scuri (Luminosità Bassa)
                     current_waveform_func = get_waveform_function(dark_wave)
-                else: # Medium Colors
+                else: # Colori Medi (Luminosità Media)
                     current_waveform_func = get_waveform_function(medium_wave)
             
             if current_waveform_func is None:
@@ -214,43 +214,43 @@ def generate_audio_wave(frequencies_and_weights_with_vval, duration_seconds, sam
     return combined_amplitude
 
 # --- Sezione principale dell'app ---
-uploaded_file = st.file_uploader("📸 Upload a photo", type=["png", "jpg", "jpeg"])
+uploaded_file = st.file_uploader("📸 Carica una foto", type=["png", "jpg", "jpeg"])
 
 if uploaded_file is not None:
     with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_image_file:
         tmp_image_file.write(uploaded_file.read())
         image_path = tmp_image_file.name
     
-    st.image(image_path, caption="Uploaded Photo", use_container_width=True)
+    st.image(image_path, caption="Foto Caricata", use_container_width=True)
     
-    st.markdown("### ⚙️ Sonification Settings")
+    st.markdown("### ⚙️ Impostazioni Sonificazione")
     
-    duration_input = st.slider("Sound Duration (seconds)", 0.5, 10.0, 2.0, 0.5)
+    duration_input = st.slider("Durata del suono (secondi)", 0.5, 10.0, 2.0, 0.5)
     
     col1, col2 = st.columns(2)
     with col1:
-        min_freq_input = st.number_input("Minimum Frequency (Hz)", min_value=1, max_value=20000, value=20, key="min_f")
+        st.number_input("Frequenza Minima (Hz)", min_value=1, max_value=20000, value=20, key="min_f")
     with col2:
-        max_freq_input = st.number_input("Maximum Frequency (Hz)", min_value=1, max_value=20000, value=2000, key="max_f")
+        st.number_input("Frequenza Massima (Hz)", min_value=1, max_value=20000, value=2000, key="max_f")
     
-    n_bins_input = st.slider("Number of Color Bins (Hue)", 1, 10, 5, 1, 
-                             help="More bins = more distinct frequencies in the sound (richer sound). Fewer bins = simpler sound.")
+    n_bins_input = st.slider("Numero di Fasce di Colore (Tonalità)", 1, 10, 5, 1, 
+                             help="Più fasce = più frequenze diverse nel suono (suono più ricco). Meno fasce = suono più semplice.")
     
-    if min_freq_input >= max_freq_input:
-        st.warning("Minimum Frequency must be less than Maximum Frequency.")
+    if st.session_state.min_f >= st.session_state.max_f: # Accesso ai valori dei number_input tramite session_state
+        st.warning("La Frequenza Minima deve essere inferiore alla Frequenza Massima.")
         
-    # --- New controls for Waveform Type ---
-    st.markdown("### 🎶 Sound Waveform Type")
+    # --- Controlli per il Tipo di Onda Sonora ---
+    st.markdown("### 🎶 Tipo di Onda Sonora")
     waveform_selection_mode = st.radio(
-        "How do you want to generate the waveforms?",
-        ["Single Waveform for all Colors", "Waveform by Color Brightness"],
+        "Come vuoi generare le onde?",
+        ["Onda Singola per tutti i Colori", "Onda per Luminosità del Colore"],
         key="waveform_mode_selector"
     )
 
     selected_single_waveform = "Sine" # Default
-    if waveform_selection_mode == "Single Waveform for all Colors":
+    if waveform_selection_mode == "Onda Singola per tutti i Colori":
         selected_single_waveform = st.radio(
-            "Choose the waveform type for all frequencies:",
+            "Scegli il tipo di onda per tutte le frequenze:",
             ["Sine", "Square", "Sawtooth", "Mixed (Sine + Square + Sawtooth)"],
             key="single_waveform_type"
         )
@@ -259,63 +259,63 @@ if uploaded_file is not None:
     medium_wave_type = "square"
     dark_wave_type = "sawtooth"
 
-    if waveform_selection_mode == "Waveform by Color Brightness":
+    if waveform_selection_mode == "Onda per Luminosità del Colore":
         st.markdown("---")
-        st.markdown("#### Assign Waveform by Brightness:")
+        st.markdown("#### Assegna Onda per Luminosità:")
         col_bright, col_medium, col_dark = st.columns(3)
         with col_bright:
             bright_wave_type = st.selectbox(
-                "Bright Colors (High Brightness):",
+                "Colori Chiari (Luminosità Alta):",
                 ["sine", "square", "sawtooth"],
-                index=0, # Default to sine
+                index=0, # Default a sine
                 key="bright_wave_type"
             )
         with col_medium:
             medium_wave_type = st.selectbox(
-                "Medium Colors (Medium Brightness):",
+                "Colori Medi (Luminosità Media):",
                 ["sine", "square", "sawtooth"],
-                index=1, # Default to square
+                index=1, # Default a square
                 key="medium_wave_type"
             )
         with col_dark:
             dark_wave_type = st.selectbox(
-                "Dark Colors (Low Brightness):",
+                "Colori Scuri (Luminosità Bassa):",
                 ["sine", "square", "sawtooth"],
-                index=2, # Default to sawtooth
+                index=2, # Default a sawtooth
                 key="dark_wave_type"
             )
         st.markdown("---")
 
 
-    # --- Analysis and immediate visualization section ---
-    st.markdown("### 📊 Color Analysis and Associated Frequencies:")
+    # --- Sezione di analisi e visualizzazione immediata ---
+    st.markdown("### 📊 Analisi Colori e Frequenze Associate:")
     
-    with st.spinner("Analyzing image colors..."):
+    with st.spinner("Analizzando i colori della foto..."):
         frequencies_and_weights_with_vval, hist_normalized, bin_edges, all_bin_actual_colors_hex = analyze_image_and_map_to_frequencies(
             image_path, n_bins_input
         )
         
         if frequencies_and_weights_with_vval or (hist_normalized.size > 0 and np.sum(hist_normalized) > 0): 
-            st.success("Color analysis complete!")
+            st.success("Analisi dei colori completata!")
             
             col_chart1, col_chart2 = st.columns(2)
 
             with col_chart1:
-                st.markdown("#### Hue Distribution")
+                st.markdown("#### Distribuzione Tonalità Colore")
                 fig_color, ax_color = plt.subplots(figsize=(6, 4))
                 hue_bin_labels = [f"{int(bin_edges[i])}°-{int(bin_edges[i+1])}°" for i in range(len(bin_edges)-1)]
                 
                 ax_color.bar(hue_bin_labels, hist_normalized * 100, color=all_bin_actual_colors_hex) 
-                ax_color.set_xlabel("Hue Band (degrees)")
-                ax_color.set_ylabel("Percentage (%)")
-                ax_color.set_title("Pixel Percentage per Hue Band")
+                ax_color.set_xlabel("Fascia di Tonalità (gradi Hue)")
+                ax_color.set_ylabel("Percentuale (%)")
+                ax_color.set_title("Percentuale Pixels per Fascia di Tonalità")
                 plt.xticks(rotation=45, ha="right")
                 plt.tight_layout()
                 st.pyplot(fig_color)
                 plt.close(fig_color) 
 
             with col_chart2:
-                st.markdown("#### Generated Frequencies and Weight")
+                st.markdown("#### Frequenze Generate e Peso")
                 freq_labels = [f"{f:.0f} Hz" for f, w, _, _, _, _ in frequencies_and_weights_with_vval]
                 freq_weights = [w * 100 for f, w, _, _, _, _ in frequencies_and_weights_with_vval]
                 
@@ -323,17 +323,17 @@ if uploaded_file is not None:
 
                 fig_freq, ax_freq = plt.subplots(figsize=(6, 4))
                 ax_freq.bar(freq_labels, freq_weights, color=bar_colors_freq)
-                ax_freq.set_xlabel("Frequency (Hz)")
-                ax_ylabel("Weight in Chord (%)")
-                ax_freq.set_title("Frequencies and their Weight in Sound")
+                ax_freq.set_xlabel("Frequenza (Hz)")
+                ax_freq.set_ylabel("Peso nell'Accordo (%)") # Correzione qui!
+                ax_freq.set_title("Frequenze e loro Peso nel Suono")
                 plt.xticks(rotation=45, ha="right")
                 plt.tight_layout()
                 st.pyplot(fig_freq)
                 plt.close(fig_freq) 
                 
             st.markdown("---")
-            st.markdown("#### Frequency Detail Table:")
-            st.markdown("| Hue Band | Percentage | Associated Frequency (Hz) | Brightness (0-1) | Frequency Type |")
+            st.markdown("#### Tabella Dettaglio Frequenze:")
+            st.markdown("| Fascia Tonalità (Hue) | Percentuale | Frequenza Associata (Hz) | Luminosità (0-1) | Tipo Frequenza |")
             st.markdown("|:----------------------:|:-----------:|:--------------------------:|:----------------:|:--------------:|")
             
             for freq, weight, hue_start, hue_end, rep_hex, v_val in frequencies_and_weights_with_vval:
@@ -343,44 +343,44 @@ if uploaded_file is not None:
                 brightness_str = f"{v_val:.2f}" 
                 
                 freq_type = ""
-                if freq < 200: freq_type = "Very Low" 
-                elif freq < 500: freq_type = "Low"
-                elif freq < 800: freq_type = "Medium-Low"
-                elif freq < 1200: freq_type = "Medium"
-                elif freq < 1800: freq_type = "Medium-High"
-                elif freq < 2000: freq_type = "High"
-                else: freq_type = "Very High"
+                if freq < 200: freq_type = "Molto Bassa" 
+                elif freq < 500: freq_type = "Bassa"
+                elif freq < 800: freq_type = "Medio-Bassa"
+                elif freq < 1200: freq_type = "Media"
+                elif freq < 1800: freq_type = "Medio-Alta"
+                elif freq < 2000: freq_type = "Alta"
+                else: freq_type = "Molto Alta"
                 
                 st.markdown(f"| {hue_range_str} | {percentage_str} | {frequency_str} | {brightness_str} | {freq_type} |", unsafe_allow_html=True)
             
             st.markdown("---")
             
-            # --- General Mapping Explanation ---
-            st.markdown("### 🔍 How Colors Become Sounds:")
+            # --- Spiegazione Generale della Mappatura Aggiornata ---
+            st.markdown("### 🔍 Come i Colori diventano Suoni:")
             st.markdown(f"""
-            This application analyzes the colors in your image, classifying them and assigning a sound frequency.
+            Questa applicazione analizza i colori della tua immagine, classificandoli e assegnando una frequenza sonora.
             
-            We have defined reference frequencies for "pure" colors (e.g., Red, Yellow, Blue) and for achromatic colors (Black, White, Gray).
-            For "mixed" colors (like orange, which is a mix of red and yellow), the frequency is **interpolated**
-            between the frequencies of its "pure" neighboring colors on the color wheel, creating a "sonic fusion".
+            Abbiamo definito frequenze di riferimento per i colori "puri" (es. Rosso, Giallo, Blu) e per i colori acromatici (Nero, Bianco, Grigio).
+            Per i colori "mistura" (come l'arancione, che è un mix di rosso e giallo), la frequenza viene **interpolata**
+            tra le frequenze dei suoi colori "puri" vicini sulla ruota cromatica, creando una "fusione sonora".
             
-            **New Feature: Sound Waveform Type!**
-            In addition to frequency (which determines the pitch of the sound), you can now also choose the **timbre** (the "quality" of the sound)
-            by selecting different waveform types:
+            **Nuova Funzionalità: Tipo di Onda Sonora!**
+            Oltre alla frequenza (che determina l'altezza del suono), ora puoi scegliere anche il **timbro** (la "qualità" del suono)
+            selezionando diversi tipi di onde:
             
-            * **Sine Wave:** The purest sound, with no overtones. Sounds soft and "sweet".
-            * **Square Wave:** Contains only odd harmonics. Has a more "hollow" sound, similar to a clarinet or some synthesizers.
-            * **Sawtooth Wave:** Contains all harmonics. Has a brighter sound, similar to a violin or brass instruments.
+            * **Sine Wave:** Il suono più puro, senza armoniche. Suona morbido e "dolce".
+            * **Square Wave:** Contiene solo armoniche dispari. Ha un suono più "cavo", simile a un clarinetto o ad alcuni sintetizzatori.
+            * **Sawtooth Wave:** Contiene tutte le armoniche. Ha un suono più "brillante", simile a un violino o a un ottoni.
             
-            You can choose a single waveform for all colors, a mix of all three, or let the application
-            assign the waveform based on the color's brightness, with custom assignments:
-            * **Bright Colors (High Brightness):** You choose the waveform.
-            * **Medium Colors (Medium Brightness):** You choose the waveform.
-            * **Dark Colors (Low Brightness):** You choose the waveform.
+            Puoi scegliere un'unica onda per tutti i colori, una miscela di tutte e tre, oppure lasciare che l'applicazione
+            assegni l'onda in base alla luminosità del colore, con assegnazioni personalizzabili:
+            * **Colori Chiari (Luminosità Alta):** Puoi scegliere il tipo di onda.
+            * **Colori Medi (Luminosità Media):** Puoi scegliere il tipo di onda.
+            * **Colori Scuri (Luminosità Bassa):** Puoi scegliere il tipo di onda.
             
             """)
             
-            st.markdown("#### Example: Color Interpolation ➡️ Frequency")
+            st.markdown("#### Esempio: Interpolazione Colore ➡️ Frequenza")
             hue_gradient_html = """
             <div style="width:100%; height:30px; 
                         background: linear-gradient(to right, 
@@ -407,16 +407,15 @@ if uploaded_file is not None:
             st.markdown("---")
 
 
-            # --- Sound generation button ---
-            if st.button("🎵 Generate Sound from Colors"):
-                with st.spinner("Generating sound..."):
+            # --- Pulsante di generazione suono ---
+            if st.button("🎵 Genera Suono dai Colori"):
+                with st.spinner("Generando il suono..."):
                     audio_data = None
-                    if waveform_selection_mode == "Single Waveform for all Colors":
+                    if waveform_selection_mode == "Onda Singola per tutti i Colori":
                         if selected_single_waveform == "Mixed (Sine + Square + Sawtooth)":
                             audio_data = generate_audio_wave(frequencies_and_weights_with_vval, duration_input, 
                                                             waveform_mode="mixed_all")
                         else:
-                            # Map readable name to internal code name
                             waveform_map_internal = {
                                 "Sine": "sine",
                                 "Square": "square",
@@ -425,7 +424,7 @@ if uploaded_file is not None:
                             audio_data = generate_audio_wave(frequencies_and_weights_with_vval, duration_input, 
                                                             waveform_mode="single", 
                                                             single_waveform_type=waveform_map_internal[selected_single_waveform])
-                    else: # Waveform by Color Brightness
+                    else: # Onda per Luminosità del Colore
                         audio_data = generate_audio_wave(frequencies_and_weights_with_vval, duration_input, 
                                                         waveform_mode="by_brightness",
                                                         bright_wave=bright_wave_type,
@@ -439,40 +438,40 @@ if uploaded_file is not None:
                             audio_output_path = tmp_audio_file.name
                             wavfile.write(audio_output_path, 44100, audio_data_int16) 
                         
-                        st.markdown("### Listen to your Sound:")
+                        st.markdown("### Ascolta il tuo Suono:")
                         st.audio(audio_output_path, format='audio/wav')
                         
                         st.download_button(
-                            label="⬇️ Download generated sound",
+                            label="⬇️ Scarica il suono generato",
                             data=open(audio_output_path, 'rb').read(),
-                            file_name="color_sound.wav",
+                            file_name="suono_colore.wav",
                             mime="audio/wav"
                         )
                         
                         os.unlink(audio_output_path)
                     else:
-                         st.error("❌ Error generating sound.")
+                         st.error("❌ Errore nella generazione del suono.")
             
         else:
-            st.warning("No frequencies generated. Ensure the image is not empty or corrupted.")
+            st.warning("Nessuna frequenza generata. Assicurati che l'immagine non sia vuota o danneggiata.")
         
     os.unlink(image_path)
             
 else:
-    st.info("⬆️ Upload a photo to start sonification!")
+    st.info("⬆️ Carica una foto per iniziare la sonificazione!")
     st.markdown("""
-    ### How it works:
-    1.  **Upload a photo** (JPG, PNG).
-    2.  The application will analyze the colors in your image, **interpolating frequencies** for mixed colors
-        and assigning fixed frequencies for primary and achromatic colors.
-    3.  **Choose the sound waveform type** you want to use: a single waveform for all frequencies, a mix of all,
-        or an automatic assignment based on color brightness, with custom selections.
-    4.  **Histograms and a table** will be displayed with the percentage of each color band and the associated sound frequency.
-    5.  Click "Generate Sound from Colors" to create a **combined sound** (a chord) representing your image.
-    6.  You can listen to and download the generated sound!
+    ### Come funziona:
+    1.  **Carica una foto** (JPG, PNG).
+    2.  L'applicazione analizzerà i colori della tua immagine, **interpolando le frequenze** per i colori misti
+        e assegnando frequenze fisse per i colori primari e acromatici.
+    3.  **Scegli il tipo di onda sonora** che vuoi utilizzare: una singola onda per tutte le frequenze, una miscela di tutte,
+        o un'assegnazione automatica basata sulla luminosità dei colori, con selezioni personalizzabili.
+    4.  **Verranno mostrati istogrammi e una tabella** con la percentuale di ogni fascia di colore e la frequenza sonora associata.
+    5.  Clicca su "Genera Suono dai Colori" per creare un **suono combinato** (un accordo) che rappresenta la tua immagine.
+    6.  Potrai ascoltare e scaricare il suono generato!
     """)
 
 # Footer
 st.markdown("---")
-st.markdown("🎨🎵 **Color Sonification** - Transform images into sounds!")
-st.markdown("*💡 Explore the link between light and sound.*")
+st.markdown("🎨🎵 **Sonificazione dei Colori** - Trasforma le immagini in suoni!")
+st.markdown("*💡 Esplora il legame tra luce e suono.*")
