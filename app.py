@@ -10,7 +10,7 @@ from scipy import signal # Per onde quadre e a sega
 import io # Importa BytesIO per gestire i file caricati
 
 # Configurazione della pagina
-st.set_page_config(page_title="🎨🎵 Sonificazione dei Colori by loop507", layout="wide") # Changed layout to wide
+st.set_page_config(page_title="🎨🎵 Sonificazione dei Colori by loop507", layout="wide")
 
 st.markdown("<h1>🎨🎵 Sonificazione dei Colori <span style='font-size:0.5em;'>by loop507</span></h1>", unsafe_allow_html=True)
 st.write("Carica una o più foto e genera un suono basato sui suoi colori, ora anche come brano sperimentale!")
@@ -357,7 +357,8 @@ def render_frequency_map_column():
 render_frequency_map_column()
 
 # Crea due colonne per il layout principale
-col_left, col_right = st.columns([0.4, 0.6]) # Left for controls, right for display
+# MODIFICA QUI: Rende le colonne di uguale larghezza
+col_left, col_right = st.columns([0.5, 0.5]) # Left for controls, right for display
 
 with col_left:
     # Abilita il caricamento di più file
@@ -915,6 +916,7 @@ with col_right:
     if st.session_state.processed_images_data:
         for img_data in st.session_state.processed_images_data:
             st.markdown(f"#### Analisi per Immagine: {img_data['name']}")
+            # L'immagine si ridimensionerà automaticamente alla nuova larghezza della colonna (50%)
             st.image(img_data['image_bytes'], caption=f"Foto: {img_data['name']}", use_container_width=True)
 
             frequencies_and_weights_with_vval = img_data['frequencies_and_weights']
@@ -929,7 +931,7 @@ with col_right:
 
             with col_chart1:
                 st.markdown("##### Distribuzione Tonalità Colore")
-                fig_color, ax_color = plt.subplots(figsize=(5, 3)) # Reduced figsize
+                fig_color, ax_color = plt.subplots(figsize=(5, 3)) # Maintained figsize
                 hue_bin_labels = [f"{int(bin_edges[i])}°-{int(bin_edges[i+1])}°" for i in range(len(bin_edges)-1)]
                 
                 ax_color.bar(hue_bin_labels, hist_normalized * 100, color=all_bin_actual_colors_hex) 
@@ -948,7 +950,7 @@ with col_right:
                 
                 bar_colors_freq = [item[4] for item in frequencies_and_weights_with_vval]
 
-                fig_freq, ax_freq = plt.subplots(figsize=(5, 3)) # Reduced figsize
+                fig_freq, ax_freq = plt.subplots(figsize=(5, 3)) # Maintained figsize
                 ax_freq.bar(freq_labels, freq_weights, color=bar_colors_freq)
                 ax_freq.set_xlabel("Frequenza (Hz)")
                 ax_freq.set_ylabel("Peso nell'Accordo (%)")
