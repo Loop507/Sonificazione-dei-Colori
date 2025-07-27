@@ -428,9 +428,6 @@ if uploaded_files:
 
     else: # Brano basato su Scansione Immagine
         st.markdown("#### Impostazioni Scansione Immagine:")
-        if len(uploaded_files) == 0:
-             st.warning("Carica una singola immagine per utilizzare la modalità di scansione.")
-             
         if len(uploaded_files) > 1:
             st.info("Per la modalità 'Brano basato su Scansione Immagine', verrà utilizzata solo la prima foto caricata.")
 
@@ -630,7 +627,7 @@ if uploaded_files:
     
     * **Sine Wave (Seno):** Il suono più puro, senza armoniche. Suona morbido e "dolce".
     * **Square Wave (Onda Quadra):** Contiene solo armoniche dispari. Ha un suono più "cavo", simile a un clarinetto o ad alcuni sintetizzatori.
-    * **Sawtooth Wave (Onda a Dente di Sega):** Contiene tutte le armoniche. Ha un suono più "brillante" e ricco, simile a un violino o a un ottoni.
+    * **Sawtooth Wave (Onda a Dente di Sega):** Contiene tutte le armoniche. Ha un suono più "brillante" e ricco, simile a un violino o ad un ottoni.
     
     Puoi scegliere un'unica onda per tutti i colori, una miscela di tutte e tre, oppure lasciare che l'applicazione
     assegni l'onda in base alla luminosità del colore, con assegnazioni personalizzabili:
@@ -763,80 +760,77 @@ if uploaded_files:
                 else: # Brano basato su Scansione Immagine
                     if len(uploaded_files) == 0:
                         st.error("Carica una singola immagine per utilizzare la modalità di scansione.")
-                        # Reset processed_images_data to ensure re-analysis if user uploads later
-                        st.session_state.processed_images_data = [] 
-                        return # Exit the function early if no file
-                    
-                    # Ensure only the first image is processed for scan mode
-                    image_to_scan = uploaded_files[0]
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_image_file:
-                        tmp_image_file.write(image_to_scan.read())
-                        image_path = tmp_image_file.name
-                    
-                    img_original = Image.open(image_path).convert('RGB')
-                    width, height = img_original.size
-                    
-                    audio_segments_from_scan = []
-                    
-                    fade_duration_per_slice = duration_per_slice * 0.1 # 10% of slice duration for fade
-
-                    for i in range(num_slices):
-                        if scan_direction == "Sinistra a Destra":
-                            slice_width = width // num_slices
-                            left = i * slice_width
-                            right = (i + 1) * slice_width
-                            if i == num_slices - 1: # Ensure last slice covers the rest of the image
-                                right = width
-                            img_slice = img_original.crop((left, 0, right, height))
-                        else: # Alto a Basso
-                            slice_height = height // num_slices
-                            top = i * slice_height
-                            bottom = (i + 1) * slice_height
-                            if i == num_slices - 1: # Ensure last slice covers the rest of the image
-                                bottom = height
-                            img_slice = img_original.crop((0, top, width, bottom))
-                        
-                        frequencies_and_weights_slice, _, _, _ = analyze_image_and_map_to_frequencies(img_slice, n_bins_input)
-                        
-                        segment_audio = None
-                        if waveform_selection_mode == "Onda Singola per tutti i Colori":
-                            if selected_single_waveform == "Mixed (Sine + Square + Sawtooth)":
-                                segment_audio = generate_audio_wave(frequencies_and_weights_slice, duration_per_slice, 
-                                                                waveform_mode="mixed_all", sample_rate=sample_rate,
-                                                                fade_in_duration=fade_duration_per_slice, fade_out_duration=fade_duration_per_slice)
-                            else:
-                                waveform_map_internal = {
-                                    "Sine": "sine",
-                                    "Square": "square",
-                                    "Sawtooth": "sawtooth"
-                                }
-                                segment_audio = generate_audio_wave(frequencies_and_weights_slice, duration_per_slice, 
-                                                                waveform_mode="single", 
-                                                                single_waveform_type=waveform_map_internal[selected_single_waveform], sample_rate=sample_rate,
-                                                                fade_in_duration=fade_duration_per_slice, fade_out_duration=fade_duration_per_slice)
-                        else:
-                            segment_audio = generate_audio_wave(frequencies_and_weights_slice, duration_per_slice, 
-                                                            waveform_mode="by_brightness",
-                                                            bright_wave=bright_wave_type,
-                                                            medium_wave=medium_wave_type,
-                                                            dark_wave=dark_wave_type, sample_rate=sample_rate,
-                                                            fade_in_duration=fade_duration_per_slice, fade_out_duration=fade_duration_per_slice)
-
-                        if segment_audio is not None and len(segment_audio) > 0:
-                            audio_segments_from_scan.append(segment_audio)
-                        else: # Add silence if no valid audio to maintain timing
-                            audio_segments_from_scan.append(np.zeros(int(duration_per_slice * sample_rate), dtype=np.float32))
-                    
-                    if audio_segments_from_scan:
-                        final_audio_data = np.concatenate(audio_segments_from_scan)
+                        # No return here, to allow the rest of the app to render normally
+                        final_audio_data = np.array([], dtype=np.float32) # Ensure final_audio_data is empty
                     else:
-                        st.error("❌ Nessun segmento audio generato dalla scansione dell'immagine.")
+                        # Ensure only the first image is processed for scan mode
+                        image_to_scan = uploaded_files[0]
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_image_file:
+                            tmp_image_file.write(image_to_scan.read())
+                            image_path = tmp_image_file.name
+                        
+                        img_original = Image.open(image_path).convert('RGB')
+                        width, height = img_original.size
+                        
+                        audio_segments_from_scan = []
+                        
+                        fade_duration_per_slice = duration_per_slice * 0.1 # 10% of slice duration for fade
+
+                        for i in range(num_slices):
+                            if scan_direction == "Sinistra a Destra":
+                                slice_width = width // num_slices
+                                left = i * slice_width
+                                right = (i + 1) * slice_width
+                                if i == num_slices - 1: # Ensure last slice covers the rest of the image
+                                    right = width
+                                img_slice = img_original.crop((left, 0, right, height))
+                            else: # Alto a Basso
+                                slice_height = height // num_slices
+                                top = i * slice_height
+                                bottom = (i + 1) * slice_height
+                                if i == num_slices - 1: # Ensure last slice covers the rest of the image
+                                    bottom = height
+                                img_slice = img_original.crop((0, top, width, bottom))
+                            
+                            frequencies_and_weights_slice, _, _, _ = analyze_image_and_map_to_frequencies(img_slice, n_bins_input)
+                            
+                            segment_audio = None
+                            if waveform_selection_mode == "Onda Singola per tutti i Colori":
+                                if selected_single_waveform == "Mixed (Sine + Square + Sawtooth)":
+                                    segment_audio = generate_audio_wave(frequencies_and_weights_slice, duration_per_slice, 
+                                                                    waveform_mode="mixed_all", sample_rate=sample_rate,
+                                                                    fade_in_duration=fade_duration_per_slice, fade_out_duration=fade_duration_per_slice)
+                                else:
+                                    waveform_map_internal = {
+                                        "Sine": "sine",
+                                        "Square": "square",
+                                        "Sawtooth": "sawtooth"
+                                    }
+                                    segment_audio = generate_audio_wave(frequencies_and_weights_slice, duration_per_slice, 
+                                                                    waveform_mode="single", 
+                                                                    single_waveform_type=waveform_map_internal[selected_single_waveform], sample_rate=sample_rate,
+                                                                    fade_in_duration=fade_duration_per_slice, fade_out_duration=fade_duration_per_slice)
+                            else:
+                                segment_audio = generate_audio_wave(frequencies_and_weights_slice, duration_per_slice, 
+                                                                waveform_mode="by_brightness",
+                                                                bright_wave=bright_wave_type,
+                                                                medium_wave=medium_wave_type,
+                                                                dark_wave=dark_wave_type, sample_rate=sample_rate,
+                                                                fade_in_duration=fade_duration_per_slice, fade_out_duration=fade_duration_per_slice)
+
+                            if segment_audio is not None and len(segment_audio) > 0:
+                                audio_segments_from_scan.append(segment_audio)
+                            else: # Add silence if no valid audio to maintain timing
+                                audio_segments_from_scan.append(np.zeros(int(duration_per_slice * sample_rate), dtype=np.float32))
+                        
+                        if audio_segments_from_scan:
+                            final_audio_data = np.concatenate(audio_segments_from_scan)
+                        else:
+                            st.error("❌ Nessun segmento audio generato dalla scansione dell'immagine.")
+                            final_audio_data = np.array([], dtype=np.float32) # Ensure final_audio_data is empty
+                        
                         try: os.unlink(image_path)
                         except Exception as e: st.warning(f"Impossibile eliminare il file temporaneo {image_path}: {e}")
-                        return
-                    
-                    try: os.unlink(image_path)
-                    except Exception as e: st.warning(f"Impossibile eliminare il file temporaneo {image_path}: {e}")
                     
 
                 # Final common audio processing and output
@@ -867,10 +861,11 @@ if uploaded_files:
                     
                     os.unlink(audio_output_path)
                 else:
-                     st.error("❌ Errore nella generazione del suono: nessun segmento audio generato.")
+                     st.error("❌ Errore nella generazione del suono: nessun segmento audio generato o un problema non specificato.")
             
             # Cleaning up temporary image files if any were created for analysis charts
-            if not st.session_state.scan_mode_active: # Only if not in scan mode, as scan mode cleans its own temp file
+            # This block now only runs if NOT in scan mode, as scan mode cleans its own temp file within its generation logic.
+            if not st.session_state.scan_mode_active: 
                 for img_data in st.session_state.processed_images_data:
                     try:
                         os.unlink(img_data['image_path'])
@@ -892,7 +887,7 @@ else:
         * "Singola Immagine" (un accordo statico per la durata scelta)
         * "Brano Sperimentale" (una sequenza di accordi dalle tue foto, con controllo su battute, tempo e **mixaggio continuo**)
         * **NOVITÀ:** "Brano basato su Scansione Immagine" (per creare una "melodia" scansionando una singola immagine fetta per fetta).
-    4.  **Scegli il tipo di onda sonora** che vuoi utilizzare: una singola onda per tutte le frequenze, una miscela di tutte,
+    4.  **Scegli il tipo di onda sonora** che vuoi utilizzare: una singola onda per tutti i colori, una miscela di tutte,
         o un'assegnazione automatica basata sulla luminosità dei colori, con selezioni personalizzabili.
     5.  **Verranno mostrati istogrammi e una tabella** con la percentuale di ogni fascia di colore e la frequenza sonora associata per ciascuna immagine (non in modalità scansione, per brevità).
     6.  Clicca su "Genera Suono dai Colori" per creare il tuo accordo o brano!
