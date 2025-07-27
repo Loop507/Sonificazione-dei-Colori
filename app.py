@@ -10,7 +10,7 @@ from scipy import signal # Per onde quadre e a sega
 import io # Importa BytesIO per gestire i file caricati
 
 # Configurazione della pagina
-st.set_page_config(page_title="🎨🎵 Sonificazione dei Colori by loop507", layout="centered")
+st.set_page_config(page_title="🎨🎵 Sonificazione dei Colori by loop507", layout="wide") # Changed layout to wide
 
 st.markdown("<h1>🎨🎵 Sonificazione dei Colori <span style='font-size:0.5em;'>by loop507</span></h1>", unsafe_allow_html=True)
 st.write("Carica una o più foto e genera un suono basato sui suoi colori, ora anche come brano sperimentale!")
@@ -319,6 +319,7 @@ def render_frequency_map_column():
     color_map_data = [
         {"name": "Nero", "hex": "#000000", "freq": 20, "sort_freq": 20},
         {"name": "Grigio", "hex": "#808080", "freq": 200, "sort_freq": 200},
+        {"name": "Marrone", "hex": "#A52A2A", "freq": 300, "sort_freq": 300}, # Aggiunto per riferimento
         {"name": "Blu (240°)", "hex": "#0000FF", "freq": 400, "sort_freq": 400},
         {"name": "Rosso (0°)", "hex": "#FF0000", "freq": 700, "sort_freq": 700},
         {"name": "Magenta (300°)", "hex": "#FF00FF", "freq": 1000, "sort_freq": 1000},
@@ -334,7 +335,7 @@ def render_frequency_map_column():
     color_map_data_sorted = sorted(color_map_data, key=lambda x: x["sort_freq"])
 
     for item in color_map_data_sorted:
-        # Per Bianco e Giallo, il testo nero è più leggibile
+        # Per Bianco, Giallo e Rosa, il testo nero è più leggibile
         text_color = "black" if item["hex"] in ["#FFFFFF", "#FFFF00", "#FFFFEE", "#FFC0CB"] else "white"
         
         st.sidebar.markdown(f"""
@@ -355,131 +356,57 @@ def render_frequency_map_column():
 # Renderizza la mappatura delle frequenze nella sidebar
 render_frequency_map_column()
 
+# Crea due colonne per il layout principale
+col_left, col_right = st.columns([0.4, 0.6]) # Left for controls, right for display
 
-# Abilita il caricamento di più file
-uploaded_files = st.file_uploader("📸 Carica una o più foto (fino a 10)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
+with col_left:
+    # Abilita il caricamento di più file
+    uploaded_files = st.file_uploader("📸 Carica una o più foto (fino a 10)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
 
-# Inizializza processed_images_data nello stato della sessione se non esiste
-if 'processed_images_data' not in st.session_state:
-    st.session_state.processed_images_data = []
+    # Inizializza processed_images_data nello stato della sessione se non esiste
+    if 'processed_images_data' not in st.session_state:
+        st.session_state.processed_images_data = []
 
-# Se il numero di file caricati cambia, pulisci i dati processati per evitare incongruenze
-uploaded_file_names = [f.name for f in uploaded_files] if uploaded_files else []
-stored_file_hashes = [data['hash'] for data in st.session_state.processed_images_data] if st.session_state.processed_images_data else []
-
-
-# Processa le immagini caricate immediatamente (se non già processate)
-if uploaded_files:
-    # Limita il numero di file a 10
-    if len(uploaded_files) > 10:
-        st.warning("Hai caricato più di 10 immagini. Saranno processate solo le prime 10.")
-        uploaded_files = uploaded_files[:10]
-    
-    new_processed_data = []
-    # Usiamo un hash del contenuto per verificare se il file è lo stesso, non solo il nome
-    for uploaded_file in uploaded_files:
-        file_bytes = uploaded_file.getvalue()
-        file_hash = hash(file_bytes) # Genera un hash del contenuto del file
+    # Processa le immagini caricate immediatamente (se non già processate)
+    if uploaded_files:
+        # Limita il numero di file a 10
+        if len(uploaded_files) > 10:
+            st.warning("Hai caricato più di 10 immagini. Saranno processate solo le prime 10.")
+            uploaded_files = uploaded_files[:10]
         
-        # Controlla se il file con questo hash è già stato processato
-        found_in_session = False
-        for stored_data in st.session_state.processed_images_data:
-            if stored_data['hash'] == file_hash and stored_data['name'] == uploaded_file.name:
-                new_processed_data.append(stored_data)
-                found_in_session = True
-                break
+        new_processed_data = []
+        # Usiamo un hash del contenuto per verificare se il file è lo stesso, non solo il nome
+        for uploaded_file in uploaded_files:
+            file_bytes = uploaded_file.getvalue()
+            file_hash = hash(file_bytes) # Genera un hash del contenuto del file
+            
+            # Controlla se il file con questo hash è già stato processato
+            found_in_session = False
+            for stored_data in st.session_state.processed_images_data:
+                if stored_data['hash'] == file_hash and stored_data['name'] == uploaded_file.name:
+                    new_processed_data.append(stored_data)
+                    found_in_session = True
+                    break
+            
+            if not found_in_session:
+                # Se il file è nuovo o modificato, analizzalo
+                
+                # Analisi con la funzione cacheata
+                frequencies_and_weights_with_vval, hist_normalized, bin_edges, all_bin_actual_colors_hex = analyze_image_and_map_to_frequencies(
+                    file_bytes, n_bins=st.session_state.get('n_bins_input_val', 5) # Usa il valore corrente di n_bins_input
+                )
+                
+                if frequencies_and_weights_with_vval or (hist_normalized.size > 0 and np.sum(hist_normalized) > 0): 
+                    new_processed_data.append({
+                        'image_bytes': file_bytes, # Store bytes directly for future use with cache
+                        'frequencies_and_weights': frequencies_and_weights_with_vval,
+                        'name': uploaded_file.name,
+                        'hash': file_hash # Store hash for quick comparison
+                    })
+                else:
+                    st.warning(f"Nessuna frequenza generata per l'immagine '{uploaded_file.name}'. Assicurati che l'immagine non sia vuota o danneggiata.")
         
-        if not found_in_session:
-            # Se il file è nuovo o modificato, analizzalo
-            st.markdown(f"#### Analisi per Immagine: {uploaded_file.name}")
-            
-            # Analisi con la funzione cacheata
-            frequencies_and_weights_with_vval, hist_normalized, bin_edges, all_bin_actual_colors_hex = analyze_image_and_map_to_frequencies(
-                file_bytes, n_bins=st.session_state.get('n_bins_input_val', 5) # Usa il valore corrente di n_bins_input
-            )
-            
-            if frequencies_and_weights_with_vval or (hist_normalized.size > 0 and np.sum(hist_normalized) > 0): 
-                st.success(f"Analisi colori per immagine '{uploaded_file.name}' completata!")
-                
-                # Visualizzazione dell'immagine
-                st.image(file_bytes, caption=f"Foto: {uploaded_file.name}", use_container_width=True)
-
-                col_chart1, col_chart2 = st.columns(2)
-
-                with col_chart1:
-                    st.markdown("##### Distribuzione Tonalità Colore")
-                    fig_color, ax_color = plt.subplots(figsize=(6, 4))
-                    hue_bin_labels = [f"{int(bin_edges[i])}°-{int(bin_edges[i+1])}°" for i in range(len(bin_edges)-1)]
-                    
-                    ax_color.bar(hue_bin_labels, hist_normalized * 100, color=all_bin_actual_colors_hex) 
-                    ax_color.set_xlabel("Fascia di Tonalità (gradi Hue)")
-                    ax_color.set_ylabel("Percentuale (%)")
-                    ax_color.set_title("Percentuale Pixels per Fascia di Tonalità")
-                    plt.xticks(rotation=45, ha="right")
-                    plt.tight_layout()
-                    st.pyplot(fig_color)
-                    plt.close(fig_color) 
-
-                with col_chart2:
-                    st.markdown("##### Frequenze Generate e Peso")
-                    freq_labels = [f"{f:.0f} Hz" for f, w, _, _, _, _ in frequencies_and_weights_with_vval]
-                    freq_weights = [w * 100 for f, w, _, _, _, _ in frequencies_and_weights_with_vval]
-                    
-                    bar_colors_freq = [item[4] for item in frequencies_and_weights_with_vval]
-
-                    fig_freq, ax_freq = plt.subplots(figsize=(6, 4))
-                    ax_freq.bar(freq_labels, freq_weights, color=bar_colors_freq)
-                    ax_freq.set_xlabel("Frequenza (Hz)")
-                    ax_freq.set_ylabel("Peso nell'Accordo (%)")
-                    ax_freq.set_title("Frequenze e loro Peso nel Suono")
-                    plt.xticks(rotation=45, ha="right")
-                    plt.tight_layout()
-                    st.pyplot(fig_freq)
-                    plt.close(fig_freq) 
-                        
-                st.markdown("---")
-                st.markdown("##### Dettagli Frequenze per Fascia di Colore:")
-                
-                for freq, weight, hue_start, hue_end, rep_hex, v_val in frequencies_and_weights_with_vval:
-                    hue_name = get_hue_range_name(hue_start, hue_end)
-                    
-                    percentage_str = f"{weight*100:.1f}%"
-                    frequency_str = f"{int(freq)} Hz" 
-                    brightness_str = f"{v_val:.2f}" 
-                    
-                    freq_type = ""
-                    if freq < 200: freq_type = "Molto Bassa" 
-                    elif freq < 500: freq_type = "Bassa"
-                    elif freq < 800: freq_type = "Medio-Bassa"
-                    elif freq < 1200: freq_type = "Media"
-                    elif freq < 1800: freq_type = "Medio-Alta"
-                    elif freq < 2000: freq_type = "Alta"
-                    else: freq_type = "Molto Alta"
-                    
-                    # Formato tipo elenco
-                    st.markdown(f"""
-                    <div style="border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; border-radius: 5px;">
-                        <p><strong>Fascia Colore (Hue):</strong> <span style='background-color:{rep_hex}; padding: 2px 5px; border-radius:3px; display:inline-block; vertical-align:middle;'>&nbsp;</span> {hue_name} ({hue_start}°-{hue_end}°)</p>
-                        <p><strong>% Pixels:</strong> {percentage_str}</p>
-                        <p><strong>Frequenza:</strong> {frequency_str}</p>
-                        <p><strong>Luminosità HSV:</strong> {brightness_str}</p>
-                        <p><strong>Altezza:</strong> {freq_type}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                st.markdown("---")
-                
-                new_processed_data.append({
-                    'image_bytes': file_bytes, # Store bytes directly for future use with cache
-                    'frequencies_and_weights': frequencies_and_weights_with_vval,
-                    'name': uploaded_file.name,
-                    'hash': file_hash # Store hash for quick comparison
-                })
-
-            else:
-                st.warning(f"Nessuna frequenza generata per l'immagine '{uploaded_file.name}'. Assicurati che l'immagine non sia vuota o danneggiata.")
-    
-    st.session_state.processed_images_data = new_processed_data
+        st.session_state.processed_images_data = new_processed_data
 
     # --- Impostazioni Sonificazione ---
     st.markdown("### ⚙️ Impostazioni Sonificazione")
@@ -495,6 +422,27 @@ if uploaded_files:
 
     duration_input = 2.0 
     sample_rate = 44100 
+
+    # Nuovo selettore per la velocità del brano
+    st.markdown("---")
+    st.markdown("#### ⏱️ Velocità del Brano")
+    tempo_preset = st.selectbox(
+        "Scegli la velocità generale del brano:",
+        ["Normale", "Lento", "Veloce"],
+        key="tempo_preset_selector"
+    )
+
+    # Imposta i valori predefiniti in base alla selezione della velocità
+    if tempo_preset == "Lento":
+        default_tempo_per_beat = 1.5
+        default_duration_per_slice = 0.3
+    elif tempo_preset == "Veloce":
+        default_tempo_per_beat = 0.5
+        default_duration_per_slice = 0.08
+    else: # Normale
+        default_tempo_per_beat = 1.0
+        default_duration_per_slice = 0.15
+    st.markdown("---")
     
     if sonification_mode == "Singola Immagine (un accordo per immagine)":
         duration_input = st.slider("Durata del suono (secondi)", 0.5, 60.0, 2.0, 0.5) 
@@ -518,7 +466,7 @@ if uploaded_files:
                 "Tempo per Battuta (secondi)",
                 min_value=0.1,
                 max_value=2.0,
-                value=1.0,
+                value=default_tempo_per_beat, # Usa il valore predefinito
                 step=0.1,
                 help="Durata di ogni singola battuta."
             )
@@ -560,7 +508,7 @@ if uploaded_files:
             "Durata di Ogni Fetta (secondi)",
             min_value=0.05, # Minore per suoni veloci
             max_value=1.0,
-            value=0.1,
+            value=default_duration_per_slice, # Usa il valore predefinito
             step=0.05,
             help="Quanto durerà il suono generato da ciascuna fetta dell'immagine."
         )
@@ -869,24 +817,106 @@ if uploaded_files:
                 else:
                      st.error("❌ Errore nella generazione del suono: nessun segmento audio generato o un problema non specificato.")
             
-else:
-    st.info("👆 Carica una o più foto per iniziare la sonificazione!")
-    st.markdown("""
-    ### Come funziona:
-    1.  **Carica una o più foto** (JPG, PNG). Puoi caricarne fino a 10 per creare un brano.
-        * **NOVITÀ:** L'analisi dei colori e i grafici appariranno **immediatamente** dopo il caricamento!
-    2.  L'applicazione analizzerà i colori di ogni immagine, **interpolando le frequenze** per i colori misti
-        e assegnando frequenze fisse per i colori primari e acromatici.
-    3.  **Scegli la modalità di sonificazione:**
-        * "Singola Immagine" (un accordo statico per la durata scelta)
-        * "Brano Sperimentale" (una sequenza di accordi dalle tue foto, con controllo su battute, tempo e **mixaggio continuo**)
-        * **NOVITÀ:** "Brano basato su Scansione Immagine" (per creare una "melodia" scansionando una singola immagine fetta per fetta).
-    4.  **Scegli il tipo di onda sonora** che vuoi utilizzare: una singola onda per tutti i colori, una miscela di tutte,
-        o un'assegnazione automatica basata sulla luminosità dei colori, con selezioni personalizzabili.
-    5.  **Verranno mostrati istogrammi e una tabella dettagliata** con la percentuale di ogni fascia di colore e la frequenza sonora associata per ciascuna immagine (per le immagini caricate intere).
-    6.  Clicca su "Genera Suono dai Colori" per creare il tuo accordo o brano!
-    7.  Potrai ascoltare e scaricare il suono generato!
-    """)
+with col_right:
+    if st.session_state.processed_images_data:
+        for img_data in st.session_state.processed_images_data:
+            st.markdown(f"#### Analisi per Immagine: {img_data['name']}")
+            st.image(img_data['image_bytes'], caption=f"Foto: {img_data['name']}", use_container_width=True)
+
+            frequencies_and_weights_with_vval = img_data['frequencies_and_weights']
+            
+            # Re-run analysis to get hist_normalized, bin_edges, all_bin_actual_colors_hex
+            # This is safe because analyze_image_and_map_to_frequencies is cached.
+            _, hist_normalized, bin_edges, all_bin_actual_colors_hex = analyze_image_and_map_to_frequencies(
+                img_data['image_bytes'], n_bins=st.session_state.get('n_bins_input_val', 5)
+            )
+
+            col_chart1, col_chart2 = st.columns(2)
+
+            with col_chart1:
+                st.markdown("##### Distribuzione Tonalità Colore")
+                fig_color, ax_color = plt.subplots(figsize=(6, 4))
+                hue_bin_labels = [f"{int(bin_edges[i])}°-{int(bin_edges[i+1])}°" for i in range(len(bin_edges)-1)]
+                
+                ax_color.bar(hue_bin_labels, hist_normalized * 100, color=all_bin_actual_colors_hex) 
+                ax_color.set_xlabel("Fascia di Tonalità (gradi Hue)")
+                ax_color.set_ylabel("Percentuale (%)")
+                ax_color.set_title("Percentuale Pixels per Fascia di Tonalità")
+                plt.xticks(rotation=45, ha="right")
+                plt.tight_layout()
+                st.pyplot(fig_color)
+                plt.close(fig_color) 
+
+            with col_chart2:
+                st.markdown("##### Frequenze Generate e Peso")
+                freq_labels = [f"{f:.0f} Hz" for f, w, _, _, _, _ in frequencies_and_weights_with_vval]
+                freq_weights = [w * 100 for f, w, _, _, _, _ in frequencies_and_weights_with_vval]
+                
+                bar_colors_freq = [item[4] for item in frequencies_and_weights_with_vval]
+
+                fig_freq, ax_freq = plt.subplots(figsize=(6, 4))
+                ax_freq.bar(freq_labels, freq_weights, color=bar_colors_freq)
+                ax_freq.set_xlabel("Frequenza (Hz)")
+                ax_freq.set_ylabel("Peso nell'Accordo (%)")
+                ax_freq.set_title("Frequenze e loro Peso nel Suono")
+                plt.xticks(rotation=45, ha="right")
+                plt.tight_layout()
+                st.pyplot(fig_freq)
+                plt.close(fig_freq) 
+                    
+            st.markdown("---")
+            st.markdown("##### Dettagli Frequenze per Fascia di Colore:")
+            
+            # Sort frequencies_and_weights_with_vval by frequency for better readability
+            sorted_frequencies_details = sorted(frequencies_and_weights_with_vval, key=lambda x: x[0])
+
+            for freq, weight, hue_start, hue_end, rep_hex, v_val in sorted_frequencies_details:
+                hue_name = get_hue_range_name(hue_start, hue_end)
+                
+                percentage_str = f"{weight*100:.1f}%"
+                frequency_str = f"{int(freq)} Hz" 
+                brightness_str = f"{v_val:.2f}" 
+                
+                freq_type = ""
+                if freq < 200: freq_type = "Molto Bassa" 
+                elif freq < 500: freq_type = "Bassa"
+                elif freq < 800: freq_type = "Medio-Bassa"
+                elif freq < 1200: freq_type = "Media"
+                elif freq < 1800: freq_type = "Medio-Alta"
+                elif freq < 2000: freq_type = "Alta"
+                else: freq_type = "Molto Alta"
+                
+                # Formato tipo elenco
+                st.markdown(f"""
+                <div style="border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; border-radius: 5px;">
+                    <p><strong>Fascia Colore (Hue):</strong> <span style='background-color:{rep_hex}; padding: 2px 5px; border-radius:3px; display:inline-block; vertical-align:middle;'>&nbsp;</span> {hue_name} ({hue_start}°-{hue_end}°)</p>
+                    <p><strong>% Pixels:</strong> {percentage_str}</p>
+                    <p><strong>Frequenza:</strong> {frequency_str}</p>
+                    <p><strong>Luminosità HSV:</strong> {brightness_str}</p>
+                    <p><strong>Altezza:</strong> {freq_type}</p>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            st.markdown("---") # Separator between images
+
+    else:
+        st.info("👆 Carica una o più foto per iniziare la sonificazione! L'analisi apparirà qui a destra.")
+        st.markdown("""
+        ### Come funziona:
+        1.  **Carica una o più foto** (JPG, PNG). Puoi caricarne fino a 10 per creare un brano.
+            * L'analisi dei colori e i grafici appariranno **immediatamente** dopo il caricamento in questa colonna!
+        2.  L'applicazione analizzerà i colori di ogni immagine, **interpolando le frequenze** per i colori misti
+            e assegnando frequenze fisse per i colori primari e acromatici.
+        3.  **Scegli la modalità di sonificazione** dalla colonna di sinistra:
+            * "Singola Immagine" (un accordo statico per la durata scelta)
+            * "Brano Sperimentale" (una sequenza di accordi dalle tue foto, con controllo su battute, tempo e **mixaggio continuo**)
+            * "Brano basato su Scansione Immagine" (per creare una "melodia" scansionando una singola immagine fetta per fetta).
+        4.  **Scegli il tipo di onda sonora** che vuoi utilizzare: una singola onda per tutti i colori, una miscela di tutte,
+            o un'assegnazione automatica basata sulla luminosità dei colori, con selezioni personalizzabili.
+        5.  **NOVITÀ:** Regola la **"Velocità del Brano"** per impostare rapidamente il ritmo generale.
+        6.  Clicca su "Genera Suono dai Colori" per creare il tuo accordo o brano!
+        7.  Potrai ascoltare e scaricare il suono generato!
+        """)
 
 # Footer
 st.markdown("---")
