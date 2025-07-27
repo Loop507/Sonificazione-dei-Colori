@@ -7,6 +7,7 @@ import os
 import matplotlib.pyplot as plt
 import colorsys # Per convertire RGB a HSV
 from scipy import signal # Per onde quadre e a sega
+import io # Importa BytesIO per gestire i file caricati
 
 # Configurazione della pagina
 st.set_page_config(page_title="🎨🎵 Sonificazione dei Colori by loop507", layout="centered")
@@ -19,8 +20,8 @@ def get_frequency_for_color_class(h_deg, s_val, v_val):
     """
     Classifica un colore HSV medio e restituisce una frequenza discreta o interpolata.
     h_deg: Hue in gradi (0-360)
-    s_val: Saturation (0.0-1.0)
-    v_val: Value (0.0-1.0)
+    s_val: Saturazione (0.0-1.0)
+    v_val: Valore (Luminosità) (0.0-1.0)
     """
     
     # 1. Priorità: Colori Acromatici (Bianco, Nero, Grigio) - Basati su Saturazione e Luminosità
@@ -124,14 +125,22 @@ def get_hue_range_name(hue_start, hue_end):
     else:
         return "Sconosciuto" # Should not happen with valid hue values
 
-# --- Funzione per l'analisi del colore ---
-def analyze_image_and_map_to_frequencies(image_or_slice_path_or_obj, n_bins=5):
+# --- Funzione per l'analisi del colore con caching ---
+@st.cache_data(show_spinner="Analizzando i colori...", persist=True)
+def analyze_image_and_map_to_frequencies(image_bytes_or_slice_obj, n_bins=5):
+    """
+    Analyzes an image (from bytes or PIL.Image object) and maps its colors to frequencies.
+    Uses @st.cache_data for performance.
+    
+    image_bytes_or_slice_obj: Either raw bytes of an image (from st.file_uploader)
+                              or a PIL.Image.Image object (for internal slicing).
+    """
     try:
-        # Check if input is a path or a PIL Image object
-        if isinstance(image_or_slice_path_or_obj, str):
-            img = Image.open(image_or_slice_path_or_obj).convert('RGB')
-        else: # Assume it's a PIL Image object
-            img = image_or_slice_path_or_obj.convert('RGB')
+        # Check if input is bytes (from uploaded file) or a PIL Image object
+        if isinstance(image_bytes_or_slice_obj, bytes):
+            img = Image.open(io.BytesIO(image_bytes_or_slice_obj)).convert('RGB')
+        else: # Assume it's a PIL Image object (for slices)
+            img = image_bytes_or_slice_obj.convert('RGB')
 
         img_array = np.array(img)
         
@@ -306,21 +315,27 @@ def render_frequency_map_column():
 
     # Definizione manuale dei colori principali e delle loro frequenze.
     # Questi sono i punti di ancoraggio per l'interpolazione.
+    # Aggiungo un 'sort_freq' per facilitare l'ordinamento
     color_map_data = [
-        {"name": "Rosso (0°)", "hex": "#FF0000", "freq": 700},
-        {"name": "Giallo (60°)", "hex": "#FFFF00", "freq": 1900},
-        {"name": "Verde (120°)", "hex": "#00FF00", "freq": 1300},
-        {"name": "Ciano (180°)", "hex": "#00FFFF", "freq": 1600},
-        {"name": "Blu (240°)", "hex": "#0000FF", "freq": 400},
-        {"name": "Magenta (300°)", "hex": "#FF00FF", "freq": 1000},
-        {"name": "Bianco", "hex": "#FFFFFF", "freq": 2000}, # Special color
-        {"name": "Grigio", "hex": "#808080", "freq": 200}, # Special color
-        {"name": "Nero", "hex": "#000000", "freq": 20} # Special color
+        {"name": "Nero", "hex": "#000000", "freq": 20, "sort_freq": 20},
+        {"name": "Grigio", "hex": "#808080", "freq": 200, "sort_freq": 200},
+        {"name": "Blu (240°)", "hex": "#0000FF", "freq": 400, "sort_freq": 400},
+        {"name": "Rosso (0°)", "hex": "#FF0000", "freq": 700, "sort_freq": 700},
+        {"name": "Magenta (300°)", "hex": "#FF00FF", "freq": 1000, "sort_freq": 1000},
+        {"name": "Rosa", "hex": "#FFC0CB", "freq": 1150, "sort_freq": 1150}, # Aggiunto per riferimento
+        {"name": "Verde (120°)", "hex": "#00FF00", "freq": 1300, "sort_freq": 1300},
+        {"name": "Ciano (180°)", "hex": "#00FFFF", "freq": 1600, "sort_freq": 1600},
+        {"name": "Giallo (60°)", "hex": "#FFFF00", "freq": 1900, "sort_freq": 1900},
+        {"name": "Giallo Chiaro", "hex": "#FFFFEE", "freq": 1950, "sort_freq": 1950}, # Aggiunto per riferimento
+        {"name": "Bianco", "hex": "#FFFFFF", "freq": 2000, "sort_freq": 2000}
     ]
 
-    for item in color_map_data:
+    # Ordina i dati per frequenza crescente
+    color_map_data_sorted = sorted(color_map_data, key=lambda x: x["sort_freq"])
+
+    for item in color_map_data_sorted:
         # Per Bianco e Giallo, il testo nero è più leggibile
-        text_color = "black" if item["hex"] in ["#FFFFFF", "#FFFF00"] else "white"
+        text_color = "black" if item["hex"] in ["#FFFFFF", "#FFFF00", "#FFFFEE", "#FFC0CB"] else "white"
         
         st.sidebar.markdown(f"""
         <div class="color-freq-box" style="background-color: {item['hex']}; color: {text_color};">
@@ -349,22 +364,124 @@ if 'processed_images_data' not in st.session_state:
     st.session_state.processed_images_data = []
 
 # Se il numero di file caricati cambia, pulisci i dati processati per evitare incongruenze
-uploaded_file_names = [f.name for f in uploaded_files]
-stored_file_names = [data['name'] for data in st.session_state.processed_images_data]
+uploaded_file_names = [f.name for f in uploaded_files] if uploaded_files else []
+stored_file_hashes = [data['hash'] for data in st.session_state.processed_images_data] if st.session_state.processed_images_data else []
 
-if uploaded_file_names != stored_file_names:
-    st.session_state.processed_images_data = [] # Pulisci se i file sono cambiati o l'ordine è diverso
 
+# Processa le immagini caricate immediatamente (se non già processate)
 if uploaded_files:
     # Limita il numero di file a 10
     if len(uploaded_files) > 10:
         st.warning("Hai caricato più di 10 immagini. Saranno processate solo le prime 10.")
         uploaded_files = uploaded_files[:10]
     
-    # Per la scansione immagine, forziamo l'uso di una singola immagine
-    if "scan_mode_active" not in st.session_state:
-        st.session_state.scan_mode_active = False # Default to false
+    new_processed_data = []
+    # Usiamo un hash del contenuto per verificare se il file è lo stesso, non solo il nome
+    for uploaded_file in uploaded_files:
+        file_bytes = uploaded_file.getvalue()
+        file_hash = hash(file_bytes) # Genera un hash del contenuto del file
+        
+        # Controlla se il file con questo hash è già stato processato
+        found_in_session = False
+        for stored_data in st.session_state.processed_images_data:
+            if stored_data['hash'] == file_hash and stored_data['name'] == uploaded_file.name:
+                new_processed_data.append(stored_data)
+                found_in_session = True
+                break
+        
+        if not found_in_session:
+            # Se il file è nuovo o modificato, analizzalo
+            st.markdown(f"#### Analisi per Immagine: {uploaded_file.name}")
+            
+            # Analisi con la funzione cacheata
+            frequencies_and_weights_with_vval, hist_normalized, bin_edges, all_bin_actual_colors_hex = analyze_image_and_map_to_frequencies(
+                file_bytes, n_bins=st.session_state.get('n_bins_input_val', 5) # Usa il valore corrente di n_bins_input
+            )
+            
+            if frequencies_and_weights_with_vval or (hist_normalized.size > 0 and np.sum(hist_normalized) > 0): 
+                st.success(f"Analisi colori per immagine '{uploaded_file.name}' completata!")
+                
+                # Visualizzazione dell'immagine
+                st.image(file_bytes, caption=f"Foto: {uploaded_file.name}", use_container_width=True)
 
+                col_chart1, col_chart2 = st.columns(2)
+
+                with col_chart1:
+                    st.markdown("##### Distribuzione Tonalità Colore")
+                    fig_color, ax_color = plt.subplots(figsize=(6, 4))
+                    hue_bin_labels = [f"{int(bin_edges[i])}°-{int(bin_edges[i+1])}°" for i in range(len(bin_edges)-1)]
+                    
+                    ax_color.bar(hue_bin_labels, hist_normalized * 100, color=all_bin_actual_colors_hex) 
+                    ax_color.set_xlabel("Fascia di Tonalità (gradi Hue)")
+                    ax_color.set_ylabel("Percentuale (%)")
+                    ax_color.set_title("Percentuale Pixels per Fascia di Tonalità")
+                    plt.xticks(rotation=45, ha="right")
+                    plt.tight_layout()
+                    st.pyplot(fig_color)
+                    plt.close(fig_color) 
+
+                with col_chart2:
+                    st.markdown("##### Frequenze Generate e Peso")
+                    freq_labels = [f"{f:.0f} Hz" for f, w, _, _, _, _ in frequencies_and_weights_with_vval]
+                    freq_weights = [w * 100 for f, w, _, _, _, _ in frequencies_and_weights_with_vval]
+                    
+                    bar_colors_freq = [item[4] for item in frequencies_and_weights_with_vval]
+
+                    fig_freq, ax_freq = plt.subplots(figsize=(6, 4))
+                    ax_freq.bar(freq_labels, freq_weights, color=bar_colors_freq)
+                    ax_freq.set_xlabel("Frequenza (Hz)")
+                    ax_freq.set_ylabel("Peso nell'Accordo (%)")
+                    ax_freq.set_title("Frequenze e loro Peso nel Suono")
+                    plt.xticks(rotation=45, ha="right")
+                    plt.tight_layout()
+                    st.pyplot(fig_freq)
+                    plt.close(fig_freq) 
+                        
+                st.markdown("---")
+                st.markdown("##### Dettagli Frequenze per Fascia di Colore:")
+                
+                for freq, weight, hue_start, hue_end, rep_hex, v_val in frequencies_and_weights_with_vval:
+                    hue_name = get_hue_range_name(hue_start, hue_end)
+                    
+                    percentage_str = f"{weight*100:.1f}%"
+                    frequency_str = f"{int(freq)} Hz" 
+                    brightness_str = f"{v_val:.2f}" 
+                    
+                    freq_type = ""
+                    if freq < 200: freq_type = "Molto Bassa" 
+                    elif freq < 500: freq_type = "Bassa"
+                    elif freq < 800: freq_type = "Medio-Bassa"
+                    elif freq < 1200: freq_type = "Media"
+                    elif freq < 1800: freq_type = "Medio-Alta"
+                    elif freq < 2000: freq_type = "Alta"
+                    else: freq_type = "Molto Alta"
+                    
+                    # Formato tipo elenco
+                    st.markdown(f"""
+                    <div style="border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; border-radius: 5px;">
+                        <p><strong>Fascia Colore (Hue):</strong> <span style='background-color:{rep_hex}; padding: 2px 5px; border-radius:3px; display:inline-block; vertical-align:middle;'>&nbsp;</span> {hue_name} ({hue_start}°-{hue_end}°)</p>
+                        <p><strong>% Pixels:</strong> {percentage_str}</p>
+                        <p><strong>Frequenza:</strong> {frequency_str}</p>
+                        <p><strong>Luminosità HSV:</strong> {brightness_str}</p>
+                        <p><strong>Altezza:</strong> {freq_type}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.markdown("---")
+                
+                new_processed_data.append({
+                    'image_bytes': file_bytes, # Store bytes directly for future use with cache
+                    'frequencies_and_weights': frequencies_and_weights_with_vval,
+                    'name': uploaded_file.name,
+                    'hash': file_hash # Store hash for quick comparison
+                })
+
+            else:
+                st.warning(f"Nessuna frequenza generata per l'immagine '{uploaded_file.name}'. Assicurati che l'immagine non sia vuota o danneggiata.")
+    
+    st.session_state.processed_images_data = new_processed_data
+
+    # --- Impostazioni Sonificazione ---
     st.markdown("### ⚙️ Impostazioni Sonificazione")
     
     sonification_mode = st.radio(
@@ -464,8 +581,10 @@ if uploaded_files:
     with col2:
         max_freq_input = st.number_input("Frequenza Massima (Hz)", min_value=1, max_value=20000, value=2000, key="max_f")
     
+    # Salva n_bins_input_val nello stato della sessione per la cache
     n_bins_input = st.slider("Numero di Fasce di Colore (Tonalità)", 1, 10, 5, 1, 
-                             help="Più fasce = più frequenze diverse nel suono (suono più ricco). Meno fasce = suono più semplice.")
+                             help="Più fasce = più frequenze diverse nel suono (suono più ricco). Meno fasce = suono più semplice.",
+                             key='n_bins_input_val')
     
     if min_freq_input >= max_freq_input:
         st.warning("La Frequenza Minima deve essere inferiore alla Frequenza Massima.")
@@ -516,102 +635,6 @@ if uploaded_files:
             )
         st.markdown("---")
 
-    # Only show image analysis charts and table if NOT in scan mode OR if data is already processed
-    if not st.session_state.scan_mode_active: # If not in scan mode, process and display as before
-        if not st.session_state.processed_images_data: 
-            for i, uploaded_file in enumerate(uploaded_files):
-                st.markdown(f"#### Analisi per Immagine {i+1}: {uploaded_file.name}")
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_image_file:
-                    tmp_image_file.write(uploaded_file.read())
-                    image_path = tmp_image_file.name
-                
-                st.image(image_path, caption=f"Foto {i+1}: {uploaded_file.name}", use_container_width=True)
-                
-                with st.spinner(f"Analizzando i colori dell'immagine {i+1}..."):
-                    frequencies_and_weights_with_vval, hist_normalized, bin_edges, all_bin_actual_colors_hex = analyze_image_and_map_to_frequencies(
-                        image_path, n_bins_input
-                    )
-                    
-                    if frequencies_and_weights_with_vval or (hist_normalized.size > 0 and np.sum(hist_normalized) > 0): 
-                        st.success(f"Analisi colori per immagine {i+1} completata!")
-                        
-                        col_chart1, col_chart2 = st.columns(2)
-
-                        with col_chart1:
-                            st.markdown("##### Distribuzione Tonalità Colore")
-                            fig_color, ax_color = plt.subplots(figsize=(6, 4))
-                            hue_bin_labels = [f"{int(bin_edges[i])}°-{int(bin_edges[i+1])}°" for i in range(len(bin_edges)-1)]
-                            
-                            ax_color.bar(hue_bin_labels, hist_normalized * 100, color=all_bin_actual_colors_hex) 
-                            ax_color.set_xlabel("Fascia di Tonalità (gradi Hue)")
-                            ax_color.set_ylabel("Percentuale (%)")
-                            ax_color.set_title("Percentuale Pixels per Fascia di Tonalità")
-                            plt.xticks(rotation=45, ha="right")
-                            plt.tight_layout()
-                            st.pyplot(fig_color)
-                            plt.close(fig_color) 
-
-                        with col_chart2:
-                            st.markdown("##### Frequenze Generate e Peso")
-                            freq_labels = [f"{f:.0f} Hz" for f, w, _, _, _, _ in frequencies_and_weights_with_vval]
-                            freq_weights = [w * 100 for f, w, _, _, _, _ in frequencies_and_weights_with_vval]
-                            
-                            bar_colors_freq = [item[4] for item in frequencies_and_weights_with_vval]
-
-                            fig_freq, ax_freq = plt.subplots(figsize=(6, 4))
-                            ax_freq.bar(freq_labels, freq_weights, color=bar_colors_freq)
-                            ax_freq.set_xlabel("Frequenza (Hz)")
-                            ax_freq.set_ylabel("Peso nell'Accordo (%)")
-                            ax_freq.set_title("Frequenze e loro Peso nel Suono")
-                            plt.xticks(rotation=45, ha="right")
-                            plt.tight_layout()
-                            st.pyplot(fig_freq)
-                            plt.close(fig_freq) 
-                            
-                        st.markdown("---")
-                        st.markdown("##### Dettagli Frequenze per Fascia di Colore:")
-                        
-                        for freq, weight, hue_start, hue_end, rep_hex, v_val in frequencies_and_weights_with_vval:
-                            hue_name = get_hue_range_name(hue_start, hue_end)
-                            
-                            percentage_str = f"{weight*100:.1f}%"
-                            frequency_str = f"{int(freq)} Hz" 
-                            brightness_str = f"{v_val:.2f}" 
-                            
-                            freq_type = ""
-                            if freq < 200: freq_type = "Molto Bassa" 
-                            elif freq < 500: freq_type = "Bassa"
-                            elif freq < 800: freq_type = "Medio-Bassa"
-                            elif freq < 1200: freq_type = "Media"
-                            elif freq < 1800: freq_type = "Medio-Alta"
-                            elif freq < 2000: freq_type = "Alta"
-                            else: freq_type = "Molto Alta"
-                            
-                            # Formato tipo elenco
-                            st.markdown(f"""
-                            <div style="border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; border-radius: 5px;">
-                                <p><strong>Fascia Colore (Hue):</strong> <span style='background-color:{rep_hex}; padding: 2px 5px; border-radius:3px; display:inline-block; vertical-align:middle;'>&nbsp;</span> {hue_name} ({hue_start}°-{hue_end}°)</p>
-                                <p><strong>% Pixels:</strong> {percentage_str}</p>
-                                <p><strong>Frequenza:</strong> {frequency_str}</p>
-                                <p><strong>Luminosità HSV:</strong> {brightness_str}</p>
-                                <p><strong>Altezza:</strong> {freq_type}</p>
-                            </div>
-                            """, unsafe_allow_html=True)
-                        
-                        st.markdown("---")
-                        
-                        st.session_state.processed_images_data.append({
-                            'image_path': image_path,
-                            'frequencies_and_weights': frequencies_and_weights_with_vval,
-                            'name': uploaded_file.name
-                        })
-
-                    else:
-                        st.warning(f"Nessuna frequenza generata per l'immagine {i+1}. Assicurati che l'immagine non sia vuota o danneggiata.")
-                    
-        else:
-            st.info("Le immagini sono già state analizzate. Premi 'Genera Suono dai Colori' o modifica le impostazioni.")
-
     st.markdown("---")
     st.markdown("### 🔍 Come i Colori diventano Suoni:")
     st.markdown(f"""
@@ -641,56 +664,50 @@ if uploaded_files:
 
     # --- Pulsante di generazione suono ---
     if st.button("🎵 Genera Suono dai Colori"):
-        if uploaded_files: # Ensure at least one file is uploaded
+        if not uploaded_files: # Check if files are actually loaded before proceeding
+            st.warning("Carica almeno una foto per generare il suono.")
+        else:
             with st.spinner("Generando il suono..."):
                 final_audio_data = np.array([], dtype=np.float32)
                 
                 if sonification_mode == "Singola Immagine (un accordo per immagine)":
-                    # Use the first uploaded image
-                    first_uploaded_file = uploaded_files[0]
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_image_file:
-                        tmp_image_file.write(first_uploaded_file.read())
-                        image_path = tmp_image_file.name
-                    
-                    frequencies_and_weights_to_use, _, _, _ = analyze_image_and_map_to_frequencies(image_path, n_bins_input)
-                    
-                    if waveform_selection_mode == "Onda Singola per tutti i Colori":
-                        if selected_single_waveform == "Mixed (Sine + Square + Sawtooth)":
+                    # Use the first uploaded image's processed data
+                    if st.session_state.processed_images_data:
+                        img_data = st.session_state.processed_images_data[0]
+                        frequencies_and_weights_to_use = img_data['frequencies_and_weights']
+                        
+                        if waveform_selection_mode == "Onda Singola per tutti i Colori":
+                            if selected_single_waveform == "Mixed (Sine + Square + Sawtooth)":
+                                final_audio_data = generate_audio_wave(frequencies_and_weights_to_use, duration_input, 
+                                                                waveform_mode="mixed_all", sample_rate=sample_rate,
+                                                                fade_in_duration=0.1, fade_out_duration=0.1) 
+                            else:
+                                waveform_map_internal = {
+                                    "Sine": "sine",
+                                    "Square": "square",
+                                    "Sawtooth": "sawtooth"
+                                }
+                                final_audio_data = generate_audio_wave(frequencies_and_weights_to_use, duration_input, 
+                                                                waveform_mode="single", 
+                                                                single_waveform_type=waveform_map_internal[selected_single_waveform], sample_rate=sample_rate,
+                                                                fade_in_duration=0.1, fade_out_duration=0.1) 
+                        else: 
                             final_audio_data = generate_audio_wave(frequencies_and_weights_to_use, duration_input, 
-                                                            waveform_mode="mixed_all", sample_rate=sample_rate,
+                                                            waveform_mode="by_brightness",
+                                                            bright_wave=bright_wave_type,
+                                                            medium_wave=medium_wave_type,
+                                                            dark_wave=dark_wave_type, sample_rate=sample_rate,
                                                             fade_in_duration=0.1, fade_out_duration=0.1) 
-                        else:
-                            waveform_map_internal = {
-                                "Sine": "sine",
-                                "Square": "square",
-                                "Sawtooth": "sawtooth"
-                            }
-                            final_audio_data = generate_audio_wave(frequencies_and_weights_to_use, duration_input, 
-                                                            waveform_mode="single", 
-                                                            single_waveform_type=waveform_map_internal[selected_single_waveform], sample_rate=sample_rate,
-                                                            fade_in_duration=0.1, fade_out_duration=0.1) 
-                    else: 
-                        final_audio_data = generate_audio_wave(frequencies_and_weights_to_use, duration_input, 
-                                                        waveform_mode="by_brightness",
-                                                        bright_wave=bright_wave_type,
-                                                        medium_wave=medium_wave_type,
-                                                        dark_wave=dark_wave_type, sample_rate=sample_rate,
-                                                        fade_in_duration=0.1, fade_out_duration=0.1) 
-                    
-                    try: os.unlink(image_path)
-                    except Exception as e: st.warning(f"Impossibile eliminare il file temporaneo {image_path}: {e}")
+                    else:
+                        st.error("Nessun dato immagine processato per la modalità Singola Immagine.")
 
                 elif sonification_mode == "Brano Sperimentale (sequenza e mixaggio)":
                     all_raw_audio_segments = []
                     segment_duration = beats_per_image * tempo_per_beat
                     current_fade_in_duration = overlap_duration 
 
-                    for uploaded_file in uploaded_files:
-                        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_image_file:
-                            tmp_image_file.write(uploaded_file.read())
-                            image_path = tmp_image_file.name
-                        
-                        frequencies_and_weights_to_use, _, _, _ = analyze_image_and_map_to_frequencies(image_path, n_bins_input)
+                    for img_data in st.session_state.processed_images_data:
+                        frequencies_and_weights_to_use = img_data['frequencies_and_weights']
                         
                         audio_data_segment = None
                         if waveform_selection_mode == "Onda Singola per tutti i Colori":
@@ -721,9 +738,6 @@ if uploaded_files:
                         
                         if audio_data_segment is not None:
                             all_raw_audio_segments.append(audio_data_segment)
-                        
-                        try: os.unlink(image_path)
-                        except Exception as e: st.warning(f"Impossibile eliminare il file temporaneo {image_path}: {e}")
 
                     if all_raw_audio_segments:
                         total_duration_calculated = segment_duration + (len(all_raw_audio_segments) - 1) * (segment_duration - overlap_duration)
@@ -758,18 +772,13 @@ if uploaded_files:
                             current_offset_samples += offset_per_segment_samples
                 
                 else: # Brano basato su Scansione Immagine
-                    if len(uploaded_files) == 0:
+                    if not st.session_state.processed_images_data: # If no images uploaded at all
                         st.error("Carica una singola immagine per utilizzare la modalità di scansione.")
-                        # No return here, to allow the rest of the app to render normally
-                        final_audio_data = np.array([], dtype=np.float32) # Ensure final_audio_data is empty
                     else:
                         # Ensure only the first image is processed for scan mode
-                        image_to_scan = uploaded_files[0]
-                        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_image_file:
-                            tmp_image_file.write(image_to_scan.read())
-                            image_path = tmp_image_file.name
+                        image_to_scan_bytes = st.session_state.processed_images_data[0]['image_bytes']
                         
-                        img_original = Image.open(image_path).convert('RGB')
+                        img_original = Image.open(io.BytesIO(image_to_scan_bytes)).convert('RGB')
                         width, height = img_original.size
                         
                         audio_segments_from_scan = []
@@ -792,6 +801,7 @@ if uploaded_files:
                                     bottom = height
                                 img_slice = img_original.crop((0, top, width, bottom))
                             
+                            # Chiamata a analyze_image_and_map_to_frequencies con l'oggetto PIL.Image direttamente
                             frequencies_and_weights_slice, _, _, _ = analyze_image_and_map_to_frequencies(img_slice, n_bins_input)
                             
                             segment_audio = None
@@ -828,11 +838,7 @@ if uploaded_files:
                         else:
                             st.error("❌ Nessun segmento audio generato dalla scansione dell'immagine.")
                             final_audio_data = np.array([], dtype=np.float32) # Ensure final_audio_data is empty
-                        
-                        try: os.unlink(image_path)
-                        except Exception as e: st.warning(f"Impossibile eliminare il file temporaneo {image_path}: {e}")
                     
-
                 # Final common audio processing and output
                 if final_audio_data.size > 0:
                     max_amplitude = np.max(np.abs(final_audio_data))
@@ -863,24 +869,12 @@ if uploaded_files:
                 else:
                      st.error("❌ Errore nella generazione del suono: nessun segmento audio generato o un problema non specificato.")
             
-            # Cleaning up temporary image files if any were created for analysis charts
-            # This block now only runs if NOT in scan mode, as scan mode cleans its own temp file within its generation logic.
-            if not st.session_state.scan_mode_active: 
-                for img_data in st.session_state.processed_images_data:
-                    try:
-                        os.unlink(img_data['image_path'])
-                    except Exception as e:
-                        st.warning(f"Impossibile eliminare il file temporaneo {img_data['image_path']}: {e}")
-            del st.session_state.processed_images_data # Pulisce lo stato dopo la generazione
-            
-        else:
-            st.warning("Carica almeno una foto per generare il suono.")
-            
 else:
     st.info("👆 Carica una o più foto per iniziare la sonificazione!")
     st.markdown("""
     ### Come funziona:
     1.  **Carica una o più foto** (JPG, PNG). Puoi caricarne fino a 10 per creare un brano.
+        * **NOVITÀ:** L'analisi dei colori e i grafici appariranno **immediatamente** dopo il caricamento!
     2.  L'applicazione analizzerà i colori di ogni immagine, **interpolando le frequenze** per i colori misti
         e assegnando frequenze fisse per i colori primari e acromatici.
     3.  **Scegli la modalità di sonificazione:**
@@ -889,7 +883,7 @@ else:
         * **NOVITÀ:** "Brano basato su Scansione Immagine" (per creare una "melodia" scansionando una singola immagine fetta per fetta).
     4.  **Scegli il tipo di onda sonora** che vuoi utilizzare: una singola onda per tutti i colori, una miscela di tutte,
         o un'assegnazione automatica basata sulla luminosità dei colori, con selezioni personalizzabili.
-    5.  **Verranno mostrati istogrammi e una tabella** con la percentuale di ogni fascia di colore e la frequenza sonora associata per ciascuna immagine (non in modalità scansione, per brevità).
+    5.  **Verranno mostrati istogrammi e una tabella dettagliata** con la percentuale di ogni fascia di colore e la frequenza sonora associata per ciascuna immagine (per le immagini caricate intere).
     6.  Clicca su "Genera Suono dai Colori" per creare il tuo accordo o brano!
     7.  Potrai ascoltare e scaricare il suono generato!
     """)
