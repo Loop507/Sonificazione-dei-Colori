@@ -20,14 +20,14 @@ st.write("Carica una foto e genera un suono basato sui suoi colori!")
 
 def get_frequency_for_color_class(h_deg, s_val, v_val, min_f_fallback=20, max_f_fallback=2000):
     """
-    Classifica un colore HSV medio e restituisce una frequenza discreta.
+    Classifica un colore HSV medio e restituisce una frequenza discreta o interpolata.
     h_deg: Hue in gradi (0-360)
     s_val: Saturation (0.0-1.0)
     v_val: Value (0.0-1.0)
     min_f_fallback, max_f_fallback: Frequenze min/max per i casi di fallback o grigi non classificati.
     """
     
-    # 1. Colori Acromatici (Bianco, Nero, Grigio) - priorità alta
+    # 1. Priorità: Colori Acromatici (Bianco, Nero, Grigio) - Basati su Saturazione e Luminosità
     if s_val < 0.15: # Bassa saturazione indica colori acromatici
         if v_val > 0.9: # Molto luminoso = Bianco
             return 2000 # Frequenza per il Bianco
@@ -36,61 +36,71 @@ def get_frequency_for_color_class(h_deg, s_val, v_val, min_f_fallback=20, max_f_
         else: # Luminosità intermedia, bassa saturazione = Grigio
             return 200 # Frequenza per il Grigio
             
-    # 2. Colori Cromatici (basati sulla tonalità/Hue e poi saturazione/valore)
-    # L'ordine è importante per le classificazioni sovrapposte (es. Giallo Chiaro prima di Giallo)
-
-    # Giallo Chiaro (Hue giallo, alta luminosità)
+    # 2. Priorità: Colori Speciali che dipendono molto da Saturazione/Valore
+    # Queste sono eccezioni alla interpolazione basata solo sulla tonalità (Hue).
+    
+    # Giallo Chiaro (Hue giallo, luminosità molto alta)
     if 45 <= h_deg < 75 and v_val > 0.8:
         return 1950 # Frequenza per il Giallo Chiaro
         
-    # Giallo (Hue giallo, luminosità media/alta)
-    if 45 <= h_deg < 75 and v_val > 0.6: 
-        return 1900 # Frequenza per il Giallo
-    
-    # Arancione (Hue arancione, luminosità media/alta)
-    if 20 <= h_deg < 45 and v_val > 0.4:
-        return 1700
-        
-    # Azzurro/Ciano Chiaro (Hue ciano/blu, alta luminosità)
-    if 180 <= h_deg < 210 and v_val > 0.7:
-        return 1600
-        
-    # Verde (Hue verde, luminosità media/alta)
-    if 75 <= h_deg < 165 and v_val > 0.4:
-        return 1300
-
-    # Rosa (Hue rosso/magenta, alta luminosità, media/bassa saturazione)
-    if (h_deg >= 330 or h_deg < 20) and s_val > 0.15 and v_val > 0.6 and s_val < 0.6: # Tonalità rosse/magenta chiare e non troppo sature
+    # Rosa (Hue rosso/magenta, alta luminosità, saturazione media/bassa)
+    if (h_deg >= 330 or h_deg < 20) and s_val > 0.15 and v_val > 0.6 and s_val < 0.6:
         return 1150
         
-    # Magenta/Fucsia (Hue magenta/rosa scuro, luminosità media)
-    if (300 <= h_deg < 345 or h_deg < 20) and v_val > 0.4: # Tonalità magenta/rossastre
-        return 1000 
-
-    # Viola/Porpora (Hue tra blu e rosso)
-    if 270 <= h_deg < 300 and v_val > 0.2:
-        return 850
-        
-    # Rosso (Hue rosso, luminosità media)
-    if (h_deg >= 345 or h_deg < 20) and v_val < 0.6 and s_val > 0.4: # Assicurati che non sia già rosa o marrone
-        return 700
-
-    # Blu (Hue blu, luminosità media)
-    if 210 <= h_deg < 270 and v_val > 0.2:
-        return 400
-        
-    # Marrone (Hue arancione/rosso, bassa luminosità, media/alta saturazione)
-    # Metto il marrone dopo i colori cromatici base, per catturare i rossi/arancioni scuri.
-    if (20 <= h_deg < 60 or h_deg >= 340 or h_deg < 20) and s_val > 0.2 and v_val < 0.4: # Tipicamente arancioni/rossi scuri
+    # Marrone (Hue arancione/rosso, bassa luminosità, saturazione media/alta)
+    if (20 <= h_deg < 60 or h_deg >= 340 or h_deg < 20) and s_val > 0.2 and v_val < 0.4:
         return 300
-        
-    # Fallback: Se non rientra in nessuna categoria specifica (es. colori molto desaturati non grigi, o sfumature complesse)
-    # Useremo una mappatura lineare semplice per questi casi, nel range di fallback
-    normalized_value = (v_val - 0.1) / 0.9 
-    if normalized_value < 0: normalized_value = 0 
     
-    # Mappiamo in un range intermedio per i fallback, per non sovrapporsi ai discreti specifici
-    return min_f_fallback + normalized_value * (max_f_fallback - min_f_fallback) * 0.5 
+    # 3. Interpolazione basata sull'Hue per i Colori Cromatici Standard
+    # Definiamo i punti di ancoraggio (Hue in gradi, Frequenza in Hz)
+    # Questi sono i nostri "colori primari/puri" che useremo per la fusione.
+    # Abbiamo aggiunto (360, 700) per gestire l'interpolazione tra Magenta e Rosso (attraversando 0 gradi).
+    hue_freq_anchors = [
+        (0, 700),    # Rosso
+        (60, 1900),  # Giallo
+        (120, 1300), # Verde
+        (180, 1600), # Ciano
+        (240, 400),  # Blu
+        (300, 1000), # Magenta
+        (360, 700)   # Rosso (per chiudere il cerchio)
+    ]
+    
+    # Trova i due punti di ancoraggio tra cui si trova il colore attuale
+    # Dobbiamo considerare il "wrap-around" per il rosso (0/360 gradi)
+    
+    # Normalize h_deg for consistent calculation when h_deg is 0-360
+    # For interpolation, we might need to adjust h_deg for the 360-0 boundary if it's near 0.
+    
+    # If h_deg is very close to 360, treat it as 0 for anchor finding
+    if h_deg >= 359.99: # Handle potential floating point imprecision for 360
+        h_deg_for_interp = 0
+    else:
+        h_deg_for_interp = h_deg
+
+    idx1 = 0
+    idx2 = 1
+    for i in range(len(hue_freq_anchors) - 1):
+        if hue_freq_anchors[i][0] <= h_deg_for_interp < hue_freq_anchors[i+1][0]:
+            idx1 = i
+            idx2 = i + 1
+            break
+    # Special case for Hue 360 (which is Red, same as 0)
+    if h_deg_for_interp == 360:
+        return 700 # Red
+
+    h1, f1 = hue_freq_anchors[idx1]
+    h2, f2 = hue_freq_anchors[idx2]
+
+    # Calculate interpolation factor (how far h_deg is between h1 and h2)
+    if (h2 - h1) == 0: # Avoid division by zero if h1 and h2 are the same (shouldn't happen with defined anchors)
+        return f1
+    
+    interpolation_factor = (h_deg_for_interp - h1) / (h2 - h1)
+    
+    # Interpolate the frequency
+    interpolated_frequency = f1 + (f2 - f1) * interpolation_factor
+    
+    return interpolated_frequency
 
 # --- Funzione per l'analisi del colore (basata su HUE e VALUE per classificazione) ---
 def analyze_image_and_map_to_frequencies(image_path, min_freq_overall=20, max_freq_overall=2000, n_bins=5):
@@ -104,6 +114,7 @@ def analyze_image_and_map_to_frequencies(image_path, min_freq_overall=20, max_fr
         bin_hsv_sums = np.zeros((n_bins, 3), dtype=float) 
         bin_pixel_counts = np.zeros(n_bins, dtype=int)
         
+        # Consideriamo che 360 gradi è lo stesso di 0 per la binning delle tonalità
         temp_bin_edges_for_digitize = np.linspace(0, 360, n_bins + 1)
         
         hue_values_all_pixels = []
@@ -116,18 +127,22 @@ def analyze_image_and_map_to_frequencies(image_path, min_freq_overall=20, max_fr
             
             hue_values_all_pixels.append(hue_degrees) 
 
+            # Assegna il pixel al bin corretto
             bin_idx = np.digitize(hue_degrees, temp_bin_edges_for_digitize) - 1
             
-            if bin_idx == n_bins:
+            # Gestisci casi limite di digitize
+            if bin_idx == n_bins: # Se il valore è esattamente 360, metti nell'ultimo bin
                 bin_idx = n_bins - 1
-            if bin_idx < 0:
+            if bin_idx < 0: # Se il valore è < 0, metti nel primo bin (dovrebbe essere raro con range 0-360)
                 bin_idx = 0
 
             bin_rgb_sums[bin_idx] += [r, g, b]
             bin_hsv_sums[bin_idx] += [hue_degrees, s, v] 
             bin_pixel_counts[bin_idx] += 1
         
-        hist, bin_edges_hist = np.histogram(hue_values_all_pixels, bins=n_bins, range=(0, 361)) 
+        # Genera l'istogramma per la visualizzazione
+        # Il range per l'istogramma deve includere 360 se vogliamo il bin per l'ultimo pezzo di rosso
+        hist, bin_edges_hist = np.histogram(hue_values_all_pixels, bins=n_bins, range=(0, 360)) 
         
         total_pixels = np.sum(hist)
         hist_normalized = hist / total_pixels if total_pixels > 0 else np.zeros_like(hist)
@@ -280,50 +295,51 @@ if uploaded_file is not None:
             # --- Spiegazione Generale della Mappatura Aggiornata ---
             st.markdown("### 🔍 Come i Colori diventano Suoni:")
             st.markdown(f"""
-            Questa applicazione analizza i colori della tua immagine, li classifica in categorie specifiche
-            e assegna una **frequenza sonora discreta** a ciascuna categoria.
+            Questa applicazione analizza i colori della tua immagine, classificandoli e assegnando una frequenza sonora.
             
-            Ecco la mappatura delle frequenze per i colori principali:
+            Abbiamo definito frequenze di riferimento per i colori "puri" (es. Rosso, Giallo, Blu) e per colori acromatici (Nero, Bianco, Grigio).
+            Per i colori "mistura" (come l'arancione, che è un mix di rosso e giallo), la frequenza viene **interpolata**
+            tra le frequenze dei suoi colori "puri" vicini sulla ruota cromatica, creando una "fusione sonora".
+            
+            Ecco la mappatura delle frequenze principali (i colori non elencati qui avranno una frequenza interpolata):
             
             * **Bianco:** {get_frequency_for_color_class(0, 0, 1, min_freq_input, max_freq_input)} Hz (frequenza più alta)
             * **Giallo Chiaro:** {get_frequency_for_color_class(60, 0.8, 0.9, min_freq_input, max_freq_input)} Hz
             * **Giallo:** {get_frequency_for_color_class(60, 0.8, 0.7, min_freq_input, max_freq_input)} Hz
-            * **Arancione:** {get_frequency_for_color_class(30, 0.8, 0.7, min_freq_input, max_freq_input)} Hz
-            * **Azzurro/Ciano Chiaro:** {get_frequency_for_color_class(190, 0.8, 0.8, min_freq_input, max_freq_input)} Hz
             * **Verde:** {get_frequency_for_color_class(120, 0.8, 0.5, min_freq_input, max_freq_input)} Hz
             * **Rosa:** {get_frequency_for_color_class(350, 0.4, 0.7, min_freq_input, max_freq_input)} Hz
-            * **Magenta/Fucsia:** {get_frequency_for_color_class(320, 0.8, 0.5, min_freq_input, max_freq_input)} Hz
-            * **Viola/Porpora:** {get_frequency_for_color_class(285, 0.7, 0.4, min_freq_input, max_freq_input)} Hz
+            * **Magenta:** {get_frequency_for_color_class(300, 0.8, 0.5, min_freq_input, max_freq_input)} Hz
             * **Rosso:** {get_frequency_for_color_class(0, 0.8, 0.5, min_freq_input, max_freq_input)} Hz
             * **Blu:** {get_frequency_for_color_class(240, 0.8, 0.5, min_freq_input, max_freq_input)} Hz
             * **Marrone:** {get_frequency_for_color_class(30, 0.6, 0.3, min_freq_input, max_freq_input)} Hz
             * **Grigio:** {get_frequency_for_color_class(0, 0.05, 0.5, min_freq_input, max_freq_input)} Hz
             * **Nero:** {get_frequency_for_color_class(0, 0, 0, min_freq_input, max_freq_input)} Hz (frequenza più bassa)
             
-            Il suono finale è un 'accordo' creato dalla combinazione delle frequenze associate ai colori più rappresentativi
+            Il suono finale è un 'accordo' creato dalla combinazione delle frequenze generate per le fasce di colore più rappresentative
             nell'immagine, con l'intensità di ciascuna frequenza proporzionale alla percentuale
             di quel 'colore' nella foto.
             """)
             
-            st.markdown("#### Mappatura Colore Nominato ➡️ Frequenza Discreta (Esempio)")
+            st.markdown("#### Esempio: Interpolazione Colore ➡️ Frequenza")
             hue_gradient_html = """
             <div style="width:100%; height:30px; 
                         background: linear-gradient(to right, 
-                        #000000, #402000, #808080, #0000FF, #800080, #FF0000, #FFC0CB, #00FF00, #FFFF00, #FF8000, #00FFFF, #FFFFFF);">
+                        #FF0000, #FF8000, #FFFF00, #80FF00, #00FF00, #00FF80, #00FFFF, #0080FF, #0000FF, #8000FF, #FF00FF, #FF0080, #FF0000);">
             </div>
-            <div style="display:flex; justify-content:space-between; font-size:0.8em;">
-                <span>Nero (20 Hz)</span>
-                <span>Marrone (300 Hz)</span>
-                <span>Grigio (200 Hz)</span>
-                <span>Blu (400 Hz)</span>
-                <span>Viola (850 Hz)</span>
-                <span>Rosso (700 Hz)</span>
-                <span>Rosa (1150 Hz)</span>
-                <span>Verde (1300 Hz)</span>
-                <span>Giallo (1900 Hz)</span>
-                <span>Arancione (1700 Hz)</span>
-                <span>Azzurro (1600 Hz)</span>
-                <span>Bianco (2000 Hz)</span>
+            <div style="display:flex; justify-content:space-between; font-size:0.8em; flex-wrap: wrap;">
+                <span>Red (700Hz)</span>
+                <span>Orange (Interp.)</span>
+                <span>Yellow (1900Hz)</span>
+                <span>Lime (Interp.)</span>
+                <span>Green (1300Hz)</span>
+                <span>Turquoise (Interp.)</span>
+                <span>Cyan (1600Hz)</span>
+                <span>Azure (Interp.)</span>
+                <span>Blue (400Hz)</span>
+                <span>Violet (Interp.)</span>
+                <span>Magenta (1000Hz)</span>
+                <span>Rose (Interp.)</span>
+                <span>Red (700Hz)</span>
             </div>
             """
             st.markdown(hue_gradient_html, unsafe_allow_html=True)
@@ -362,12 +378,12 @@ else:
     st.info("⬆️ Carica una foto per iniziare la sonificazione!")
     st.markdown("""
     ### Come funziona:
-    1. **Carica una foto** (JPG, PNG).
-    2. L'applicazione analizzerà i colori della tua immagine, li **classificherà** in categorie (es. Bianco, Giallo, Rosso)
-       e assegnerà una **frequenza sonora specifica e discreta** a ciascuna categoria.
-    3. **Verranno mostrati istogrammi e una tabella** con la percentuale di ogni fascia di colore e la frequenza sonora associata. I colori negli istogrammi e nella tabella rispecchieranno i colori reali della tua foto!
-    4. Clicca su "Genera Suono dai Colori" per creare un **suono combinato** (un accordo) che rappresenta la distribuzione dei colori della tua immagine, della durata desiderata.
-    5. Potrai ascoltare e scaricare il suono generato!
+    1.  **Carica una foto** (JPG, PNG).
+    2.  L'applicazione analizzerà i colori della tua immagine, classificandoli e **interpolando le frequenze**
+        per i colori misti, basandosi sulle frequenze dei colori "puri" vicini.
+    3.  **Verranno mostrati istogrammi e una tabella** con la percentuale di ogni fascia di colore e la frequenza sonora associata. I colori negli istogrammi e nella tabella rispecchieranno i colori reali della tua foto!
+    4.  Clicca su "Genera Suono dai Colori" per creare un **suono combinato** (un accordo) che rappresenta la distribuzione dei colori della tua immagine, della durata desiderata.
+    5.  Potrai ascoltare e scaricare il suono generato!
     """)
 
 # Footer
