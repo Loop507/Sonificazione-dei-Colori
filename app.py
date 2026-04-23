@@ -44,7 +44,7 @@ def analyze_image(image_bytes):
     v = cmax
 
     # Saturation
-    s = np.where(cmax > 0, delta / cmax, 0.0)
+    s = np.where(cmax > 1e-8, delta / (cmax + 1e-8), 0.0)
 
     # Hue
     hue = np.zeros_like(r)
@@ -227,7 +227,7 @@ if uploaded_files:
     cols = st.columns(min(len(uploaded_files), 5))
     for i, f in enumerate(uploaded_files):
         with cols[i % 5]:
-            st.image(f, use_container_width=True, caption=f.name[:12])
+            st.image(f, width='stretch', caption=f.name[:12])
 
 st.divider()
 
@@ -238,7 +238,7 @@ with col2:
     wave_type = st.selectbox("🎵 Tipo di onda", ["sine", "sawtooth", "square"],
         format_func=lambda x: {"sine": "Sine — morbida", "sawtooth": "Sawtooth — brillante", "square": "Square — cava"}[x])
 
-if st.button("🎨 Genera Suono", use_container_width=True):
+if st.button("🎨 Genera Suono", width='stretch'):
     if not uploaded_files:
         st.warning("Carica almeno una foto.")
     else:
