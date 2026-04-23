@@ -190,15 +190,19 @@ def build_report(images_info, total_duration, wave_type):
 
 
 def wav_to_mp3(wav_path, bitrate="192k"):
-    """Converte WAV in MP3 usando pydub."""
+    """Converte WAV in MP3 usando ffmpeg diretto."""
+    import subprocess
+    mp3_path = wav_path.replace(".wav", ".mp3")
     try:
-        from pydub import AudioSegment
-        audio = AudioSegment.from_wav(wav_path)
-        mp3_path = wav_path.replace(".wav", ".mp3")
-        audio.export(mp3_path, format="mp3", bitrate=bitrate)
-        return mp3_path
-    except Exception as e:
-        st.warning(f"Conversione MP3 non disponibile: {e}. Download in WAV.")
+        result = subprocess.run(
+            ['ffmpeg', '-i', wav_path, '-b:a', bitrate, '-y', mp3_path],
+            capture_output=True
+        )
+        if result.returncode == 0 and os.path.exists(mp3_path):
+            return mp3_path
+        else:
+            return wav_path
+    except Exception:
         return wav_path
 
 
