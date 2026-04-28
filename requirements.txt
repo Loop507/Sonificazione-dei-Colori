@@ -3,4 +3,3 @@ Pillow
 numpy
 scipy
 matplotlib
-pydub
