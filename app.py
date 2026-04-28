@@ -982,11 +982,22 @@ with col_left:
                     wavfile.write(wav_path, sample_rate, audio_data_int16)
 
                     mp3_path = wav_path.replace(".wav", ".mp3")
-                    res = subprocess.run(['ffmpeg', '-i', wav_path, '-b:a', '192k', '-y', mp3_path], capture_output=True)
-                    final_audio_path = mp3_path if (res.returncode == 0 and os.path.exists(mp3_path)) else wav_path
-                    is_mp3 = final_audio_path.endswith(".mp3")
-                    try: os.unlink(wav_path)
-                    except: pass
+                    is_mp3 = False
+                    final_audio_path = wav_path
+                    try:
+                        res = subprocess.run(
+                            ['ffmpeg', '-i', wav_path, '-b:a', '192k', '-y', mp3_path],
+                            capture_output=True, timeout=60
+                        )
+                        if res.returncode == 0 and os.path.exists(mp3_path):
+                            final_audio_path = mp3_path
+                            is_mp3 = True
+                            try: os.unlink(wav_path)
+                            except: pass
+                    except (FileNotFoundError, Exception):
+                        # ffmpeg non disponibile — usa WAV
+                        final_audio_path = wav_path
+                        is_mp3 = False
 
                     mode_label = {
                         "Singola Immagine (un accordo per immagine)": "Singola Immagine",
@@ -1003,6 +1014,18 @@ with col_left:
 
                     fmt_label = "MP3 192kbps" if is_mp3 else "WAV"
                     wave_label = selected_single_waveform if waveform_selection_mode == "Onda Singola per tutti i Colori" else "Per luminosita"
+
+                    # Costruisci sezione percentuali colori per ogni foto
+                    color_pct_lines = []
+                    for img_d in st.session_state.processed_images_data:
+                        color_pct_lines.append(f"  [{img_d['name']}]")
+                        fw = img_d['frequencies_and_weights']
+                        _, hist_n, bin_e, _ = analyze_image_and_map_to_frequencies(
+                            img_d['image_bytes'], n_bins=n_bins_input
+                        )
+                        for i, (freq, weight, h_start, h_end, hex_col, v_val) in enumerate(fw):
+                            color_name = get_hue_range_name(h_start, h_end)
+                            color_pct_lines.append(f"  * {color_name}: {weight*100:.1f}% -> {int(freq)} Hz")
 
                     report_lines = [
                         f"[STUDIO_SONIFICAZIONE] // VOL_01 // {'MP3' if is_mp3 else 'WAV'} // COLOR_TO_SOUND",
@@ -1022,6 +1045,9 @@ with col_left:
                     ]
                     if seq_line:
                         report_lines.append(seq_line)
+                    report_lines.append("")
+                    report_lines.append("> PERCENTUALI COLORI PER FOTO:")
+                    report_lines.extend(color_pct_lines)
                     report_lines += [
                         "",
                         "> CRITERI DI MAPPATURA:",
